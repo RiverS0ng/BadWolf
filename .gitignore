@@ -1,0 +1,6 @@
+*.swp
+/src/go/bin/
+/src/go/pkg/
+/src/go/vendor/
+/src/go/src/badwolf/Gopkg.lock
+/src/go/src/badwolf/vendor/
