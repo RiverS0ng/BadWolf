@@ -2,7 +2,7 @@ PRJ=src/badwolf
 
 GOENV=GOPATH=$(CURDIR)
 GOCMD=$(GOENV) go
-GOBUILD=$(GOCMD) build
+GOBUILD=$(GOCMD) install
 GOCLEAN=$(GOCMD) clean
 GOTEST=$(GOCMD) test
 GODEP=$(GOENV) dep
