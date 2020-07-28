@@ -99,6 +99,9 @@ func (self *Router) send(dst uint8, body []byte) error {
 	if !ok {
 		return fmt.Errorf("unkown route.")
 	}
+	if len(plist) < 1 {
+		return fmt.Errorf("unkown route.")
+	}
 
 	for _, port := range plist {
 		go port.Send(body)
@@ -110,7 +113,7 @@ func (self *Router) Recv() (chan []byte, error) {
 	self.lock()
 	defer self.unlock()
 
-	if self.havePort() {
+	if !self.havePort() {
 		return self.recv, fmt.Errorf("not connect port")
 	}
 	return self.recv, nil
