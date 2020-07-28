@@ -1,0 +1,7 @@
+version: '3'
+services:
+    dev-go:
+        build: ./dev-go
+        tty: true
+        volumes:
+            - ../src/go:/go/src
