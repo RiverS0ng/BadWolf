@@ -38,6 +38,7 @@ type Router struct {
 	cancel context.CancelFunc
 
 	mtx    *sync.Mutex
+	wg     *sync.WaitGroup
 }
 
 func NewRouter(bg_ctx context.Context, rtype uint8) *Router {
@@ -59,6 +60,7 @@ func NewRouter(bg_ctx context.Context, rtype uint8) *Router {
 		ctx:ctx,
 		cancel:cancel,
 		mtx:new(sync.Mutex),
+		wg:new(sync.WaitGroup),
 	}
 }
 
@@ -129,12 +131,15 @@ func (self *Router) havePort() bool {
 }
 
 func (self *Router) listen(path string) error {
+	self.wg.Add(1)
+
 	sv, err := net.Listen("unix", path)
 	if err != nil {
 		return err
 	}
 
 	go func() {
+		defer self.wg.Done()
 		defer os.Remove(path)
 		defer sv.Close()
 
@@ -204,12 +209,14 @@ func (self *Router) append(port *port) error {
 }
 
 func (self *Router) close() error {
+	defer self.wg.Wait()
+	self.cancel()
+
 	for _, plist := range self.plists {
 		for _, port := range plist {
 			port.Close()
 		}
 	}
-	self.cancel()
 	return nil
 }
 
@@ -229,6 +236,8 @@ type port struct {
 
 	sendq chan *frame
 	recvq chan *frame
+
+	send_lock *sync.Mutex
 	ctx context.Context
 }
 
@@ -238,6 +247,7 @@ func newPort(ctx context.Context, con net.Conn, left uint8) *port {
 		con:con,
 		sendq:make(chan *frame),
 		recvq:make(chan *frame),
+		send_lock:new(sync.Mutex),
 		ctx:ctx,
 	}
 
@@ -310,6 +320,9 @@ func (self *port) run_sender() {
 }
 
 func (self *port) write(f *frame) error {
+	self.send_lock.Lock()
+	defer self.send_lock.Unlock()
+
 	bs := f.Bytes()
 	l, err := self.con.Write(bs)
 	if err != nil {
@@ -318,6 +331,8 @@ func (self *port) write(f *frame) error {
 	if l != len(bs) {
 		return fmt.Errorf("can't send frame")
 	}
+
+	self.con.(*net.UnixConn).CloseWrite()
 	return nil
 }
 
@@ -342,7 +357,7 @@ func (self *port) run_recver() {
 		}
 	}()
 
-	ret := []byte{}
+	buf := []byte{}
 	for {
 		select {
 		case <-self.ctx.Done():
@@ -350,29 +365,31 @@ func (self *port) run_recver() {
 		case <-timer.C:
 			return
 		case rcv := <- rcv_ch:
-			if rcv.err != nil {
-				if rcv.err != io.EOF {
-					logger.PrintErr("port.run_recver: %s", rcv.err)
-					continue
-				}
-
-				f, err := bytes2frame(ret)
-				if err != nil {
-					logger.PrintErr("port.run_recver: %s", err)
-					ret = []byte{}
-					continue
-				}
-
-				timer.Stop()
-				timer.Reset(t_range)
-				ret = []byte{}
-
-				if f.flag == FLG_PING {
-					continue
-				}
-				go func() {self.recvq <- f}()
+			if rcv.err == nil {
+				buf = append(buf, rcv.ret...)
+				continue
 			}
-			ret = append(ret, rcv.ret...)
+
+			if rcv.err != io.EOF {
+				logger.PrintErr("port.run_recver: %s", rcv.err)
+				return
+			}
+
+			f, err := bytes2frame(buf)
+			if err != nil {
+				logger.PrintErr("port.run_recver: %s", err)
+				buf = []byte{}
+				continue
+			}
+
+			timer.Stop()
+			timer.Reset(t_range)
+			buf = []byte{}
+
+			if f.flag == FLG_PING {
+				continue
+			}
+			go func() {self.recvq <- f}()
 		}
 	}
 }
@@ -389,7 +406,7 @@ func (self *port) getRightType() error {
 		case <-timer.C:
 			return fmt.Errorf("timeout.")
 		case f := <- self.recv():
-			bs := f.Bytes()
+			bs := f.Body()
 			if len(bs) < 1 {
 				return fmt.Errorf("too short return bytes.")
 			}

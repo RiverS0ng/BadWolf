@@ -11,6 +11,9 @@ build: $(SRCS) ## build to all container
 run: $(SRCS) ## start up to all container
 	$(DC) up -d
 
+stop: $(SRCS) ## down to to all container
+	$(DC) down
+
 .PHONY: clean
 clean: ## stop container and cleanup data
 	$(DC) down --rmi all
