@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"sync"
-//	"time"
+	"time"
 )
 
 const TestSockPath = "/var/tmp/testsock"
@@ -17,7 +17,6 @@ func TestCreate(t *testing.T) {
 	defer rt.Close()
 	return
 }
-
 func TestCreatePort(t *testing.T) {
 	rt1 := NewRouter(nil, TYPE_CORE)
 	defer rt1.Close()
@@ -93,6 +92,7 @@ func TestLeft2Right(t *testing.T) {
 
 	msg := "test"
 
+
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
 	go func() {
@@ -148,7 +148,7 @@ func TestRight2Left(t *testing.T) {
 		}
 	}()
 
-	if err := rt2.Send(TYPE_NOTICE, []byte(msg)); err != nil {
+	if err := rt2.Send(TYPE_CORE, []byte(msg)); err != nil {
 		t.Fatal("can't send packet : ", err)
 	}
 
@@ -176,11 +176,8 @@ func TestSendToUnconnectType(t *testing.T) {
 	}
 	return
 }
-/*
 
 func TestWaitKeepalive(t *testing.T) {
-	TestSockPath := "testsock"
-
 	rt1 := NewRouter(nil, TYPE_CORE)
 	defer rt1.Close()
 	rt2 := NewRouter(nil, TYPE_NOTICE)
@@ -202,7 +199,7 @@ func TestWaitKeepalive(t *testing.T) {
 	go func() {
 		defer wg.Done()
 
-		ch, err := rt1.Recv()
+		ch, err := rt2.Recv()
 		if err != nil {
 			t.Fatal("can't recv :",err)
 		}
@@ -213,11 +210,10 @@ func TestWaitKeepalive(t *testing.T) {
 		}
 	}()
 
-	if err := rt2.Send(TYPE_NOTICE, []byte(msg)); err != nil {
+	if err := rt1.Send(TYPE_NOTICE, []byte(msg)); err != nil {
 		t.Fatal("can't send packet : ", err)
 	}
 
 	wg.Wait()
 	return
 }
-*/

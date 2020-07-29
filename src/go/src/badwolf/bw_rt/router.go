@@ -7,6 +7,7 @@ import (
 	"net"
 	"sync"
 	"time"
+	"strings"
 	"context"
 )
 
@@ -21,11 +22,13 @@ const (
 	TYPE_BLOADCAST uint8 = 255
 
 	FLG_PING         uint8 = 0
+	FLG_BYE          uint8 = 255
 	FLG_SYNC         uint8 = 2
 	FLG_DATA         uint8 = 5
 
 	TIMEOUT_LIMIT    int = 4
 	BLOCKSIZE        int = 4096
+	END_OF_FRAME     string = "\n\n"
 )
 
 type Router struct {
@@ -99,10 +102,10 @@ func (self *Router) send(dst uint8, body []byte) error {
 
 	plist, ok := self.plists[dst]
 	if !ok {
-		return fmt.Errorf("unkown route.")
+		return fmt.Errorf("undefined port table.")
 	}
 	if len(plist) < 1 {
-		return fmt.Errorf("unkown route.")
+		return fmt.Errorf("undefined port entry.")
 	}
 
 	for _, port := range plist {
@@ -131,13 +134,12 @@ func (self *Router) havePort() bool {
 }
 
 func (self *Router) listen(path string) error {
-	self.wg.Add(1)
-
 	sv, err := net.Listen("unix", path)
 	if err != nil {
 		return err
 	}
 
+	self.wg.Add(1)
 	go func() {
 		defer self.wg.Done()
 		defer os.Remove(path)
@@ -157,6 +159,8 @@ func (self *Router) listen(path string) error {
 
 		for {
 			select {
+			case <- self.ctx.Done():
+				return
 			case rcv := <-rcv_ch:
 				if rcv.err != nil {
 					logger.PrintErr("Router.listen: %s", rcv.err)
@@ -165,8 +169,10 @@ func (self *Router) listen(path string) error {
 
 				c_ctx, _ := context.WithCancel(self.ctx)
 				go func(c_ctx context.Context) {
-					port, err := linkup(c_ctx, self.rtype, rcv.sess, self.recv)
+					self.lock()
+					defer self.unlock()
 
+					port, err := linkup(c_ctx, self.rtype, rcv.sess, self.recv)
 					if err != nil {
 						logger.PrintErr("Router.listen: %s", err)
 						return
@@ -174,8 +180,6 @@ func (self *Router) listen(path string) error {
 
 					self.append(port)
 				}(c_ctx)
-			case <- self.ctx.Done():
-				return
 			}
 		}
 	}()
@@ -251,8 +255,8 @@ func newPort(ctx context.Context, con net.Conn, left uint8) *port {
 		ctx:ctx,
 	}
 
-	go self.run_recver()
 	go self.run_sender()
+	go self.run_recver()
 
 	return self
 }
@@ -270,11 +274,12 @@ func (self *port) connectRecvPipe(b_ch chan []byte) {
 	go func() {
 		for {
 			select {
-			case f := <- self.recvq:
-				b_ch <- f.Body()
 			case <- self.ctx.Done():
 				return
+			case f := <- self.recvq:
+				b_ch <- f.Body()
 			}
+
 		}
 	}()
 }
@@ -331,8 +336,8 @@ func (self *port) write(f *frame) error {
 	if l != len(bs) {
 		return fmt.Errorf("can't send frame")
 	}
+	self.con.Write([]byte(END_OF_FRAME))
 
-	self.con.(*net.UnixConn).CloseWrite()
 	return nil
 }
 
@@ -365,26 +370,35 @@ func (self *port) run_recver() {
 		case <-timer.C:
 			return
 		case rcv := <- rcv_ch:
-			if rcv.err == nil {
-				buf = append(buf, rcv.ret...)
+			buf = append(buf, rcv.ret...)
+
+			if rcv.err != nil {
+				if rcv.err != io.EOF {
+					logger.PrintErr("port.run_recver: %s", rcv.err)
+					return
+				}
+				continue
+			}
+			if len(buf) < 1 {
 				continue
 			}
 
-			if rcv.err != io.EOF {
-				logger.PrintErr("port.run_recver: %s", rcv.err)
-				return
+			packets := strings.SplitN(string(buf), END_OF_FRAME, 2)
+			if len(packets) < 2 {
+				continue
 			}
+			framebase := []byte(packets[0])
+			nbuf := []byte(packets[1])
+			buf = nbuf
 
-			f, err := bytes2frame(buf)
+			f, err := bytes2frame(framebase)
 			if err != nil {
 				logger.PrintErr("port.run_recver: %s", err)
-				buf = []byte{}
 				continue
 			}
 
 			timer.Stop()
 			timer.Reset(t_range)
-			buf = []byte{}
 
 			if f.flag == FLG_PING {
 				continue
