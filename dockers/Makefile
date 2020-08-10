@@ -1,6 +1,12 @@
 GOLANG=dev-go
 DC=docker-compose
 
+CURRENT_UID := $(shell id -u)
+CURRENT_GID := $(shell id -g)
+
+export CURRENT_UID
+export CURRENT_GID
+
 SRCS := $(shell find . -type f)
 
 all: go ## test & build
