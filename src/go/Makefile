@@ -15,11 +15,11 @@ BINS := $(shell test -d ./bin && find ./bin/ -type f)
 all: test build ## test & build
 
 build: $(SRCS) ## build to linux binary
-	$(GOBUILD) $(BUILD_FLGS) ./...
+	$(GOBUILD) $(BUILD_FLGS) ./src/badwolf/exec/...
 
 .PHONY: test
 test: ## run test
-	$(GOTEST) -count=1 ./...
+	$(GOTEST) -count=1 ./src/badwolf/...
 
 .PHONY: clean
 clean: $(BINS) ## cleanup

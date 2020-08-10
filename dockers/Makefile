@@ -24,6 +24,8 @@ gobuild: ## build golang
 	$(DC) exec $(GOLANG) make build
 gotest: ## test golang
 	$(DC) exec $(GOLANG) make test
+godep: ## run golang package manager
+	$(DC) exec $(GOLANG) make dep
 goclean: ## clean golang
 	$(DC) exec $(GOLANG) make clean
 
