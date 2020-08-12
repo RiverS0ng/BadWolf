@@ -46,14 +46,18 @@ func (self *News) Bytes() ([]byte, error) {
 }
 
 type Event struct {
-	id    string
+	id    []byte
 	data  *News
 }
 
-func newEvent(id string, news *News) *Event {
-	return &Event{id:id, data:news}
+func newEvent(id []byte, news *News) *Event {
+	cp_id := make([]byte, 16)
+	copy(cp_id, id)
+	return &Event{id:cp_id, data:news}
 }
 
-func (self *Event) Id() string {
-	return self.id
+func (self *Event) Id() []byte {
+	cp_id := make([]byte, 16)
+	copy(cp_id, self.id)
+	return cp_id
 }
