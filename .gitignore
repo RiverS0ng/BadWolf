@@ -4,3 +4,4 @@
 /src/go/vendor/
 /src/go/src/badwolf/Gopkg.lock
 /src/go/src/badwolf/vendor/
+/src/go/src/badwolf/.vendor-new/
