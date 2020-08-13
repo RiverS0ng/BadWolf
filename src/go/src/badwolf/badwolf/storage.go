@@ -2,6 +2,7 @@ package badwolf
 
 import (
 	"os"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
+	"github.com/syndtr/goleveldb/leveldb/util"
 )
 
 const (
@@ -122,7 +124,7 @@ func (self *TimeVortex) Close() {
 	self.wg.Wait()
 }
 
-func (self *TimeVortex) AddNewEvent(t_name string, news *News) (*Event, error) {
+func (self *TimeVortex) AddNewEvent(tool string, news *News) (*Event, error) {
 	self.lock()
 	defer self.unlock()
 
@@ -136,7 +138,7 @@ func (self *TimeVortex) AddNewEvent(t_name string, news *News) (*Event, error) {
 		return nil, err
 	}
 
-	if err := self.updateCategory(t_name, CATEGORY_ORG, []string{string(eid)}); err != nil {
+	if err := self.updateCategory(tool, CATEGORY_ORG, []string{string(eid)}); err != nil {
 		return nil, err
 	}
 	return newEvent(eid, news), nil
@@ -149,15 +151,15 @@ func (self *TimeVortex) DeleteEvent(eid string) error {
 	return self.timeline.Delete([]byte(eid), nil)
 }
 
-func (self *TimeVortex) UpdateCategory(t_name string, category string, eids []string) error {
+func (self *TimeVortex) UpdateCategory(tool string, category string, eids []string) error {
 	self.lock()
 	defer self.unlock()
 
-	return self.updateCategory(t_name, category, eids)
+	return self.updateCategory(tool, category, eids)
 
 }
 
-func (self *TimeVortex) updateCategory(t_name string, category string, eids []string) error {
+func (self *TimeVortex) updateCategory(tool string, category string, eids []string) error {
 	cid := make([]byte, 0, 4096)
 
 	utime := uint64(time.Now().Unix())
@@ -174,10 +176,10 @@ func (self *TimeVortex) updateCategory(t_name string, category string, eids []st
 	cid = append(cid, b_category...)
 	cid = append(cid, c_dummy...)
 
-	b_t_name := []byte(t_name)
-	t_trunc := SIZE_LIMIT_TOOLNAME - len(b_t_name)
+	b_tool := []byte(tool)
+	t_trunc := SIZE_LIMIT_TOOLNAME - len(b_tool)
 	t_dummy := make([]byte, t_trunc)
-	cid = append(cid, b_t_name...)
+	cid = append(cid, b_tool...)
 	cid = append(cid, t_dummy...)
 
 	b_eids := make([]byte, 0, len(eids) * 16)
@@ -191,9 +193,105 @@ func (self *TimeVortex) updateCategory(t_name string, category string, eids []st
 	return nil
 }
 
-//func (self *TimeVortex) Find(t1, t2, opt{[]t_name, []cat}) ([][]byte, error) {}
+func (self *TimeVortex) Find(c context.Context, st time.Time, et time.Time, opt *Options) ([]*Event, error) {
+	self.lock()
+	defer self.unlock()
 
-//func (self *TimeVortex) NewEventIter()
+	b_st := make([]byte, 8)
+	b_et := make([]byte, 8)
+	binary.LittleEndian.PutUint64(b_st, uint64(st.Unix()))
+	binary.LittleEndian.PutUint64(b_et, uint64(et.Unix()))
+
+	if opt == nil {
+		return self.walkEvent(c, b_st, b_et)
+	}
+	return self.findEvent(c, b_st, b_et, opt)
+}
+
+func (self *TimeVortex) walkEvent(c context.Context, b_st []byte, b_et []byte) ([]*Event, error) {
+	iter := self.timeline.NewIterator(&util.Range{Start:b_st, Limit:b_et}, nil)
+
+	evts := []*Event{}
+	for iter.Next() {
+		eid := iter.Key()
+		b_news := iter.Value()
+
+		news, err := Bytes2News(b_news)
+		if err != nil {
+			return nil, fmt.Errorf("findEvent: parse failed: %s", err)
+		}
+		evts = append(evts, newEvent(eid, news))
+	}
+	if err := iter.Error(); err != nil {
+		return nil, err
+	}
+	return evts, nil
+}
+
+func (self *TimeVortex) findEvent(c context.Context, b_st []byte, b_et []byte, opt *Options) ([]*Event, error) {
+	eid_ch := make(chan []byte)
+	evts := []*Event{}
+
+	go func() {
+		iter := self.category.NewIterator(&util.Range{Start:b_st, Limit:b_et}, nil)
+
+		for iter.Next() {
+			k := iter.Key()
+			v := iter.Value()
+
+			limit_c := 16 + SIZE_LIMIT_CATEGORYNAME
+			limit_t := limit_c + SIZE_LIMIT_TOOLNAME
+			b_cat := k[16:limit_c]
+			b_tname := k[limit_c:limit_t]
+
+			if !opt.Match(b_cat, b_tname) {
+				continue
+			}
+
+			go func() {
+				h := 0
+				for h < len(v) {
+					l := h + 16
+
+					select {
+					case <- c.Done():
+						return
+					case eid_ch <- v[h:l]:
+					}
+					h = l
+				}
+			}()
+		}
+	}()
+
+	for {
+		select {
+		case <-c.Done():
+			return nil, fmt.Errorf("findEvent: canceled")
+		case eid, ok := <-eid_ch:
+			if !ok {
+				return evts, nil
+			}
+
+			b_news, err := self.timeline.Get(eid, nil)
+			if err != nil {
+				if err != leveldb.ErrNotFound {
+					return nil, err
+				}
+				continue
+			}
+
+			news, err := Bytes2News(b_news)
+			if err != nil {
+				return nil, fmt.Errorf("findEvent: parse failed: %s", err)
+			}
+			evts = append(evts, newEvent(eid, news))
+		}
+	}
+	return evts, nil
+}
+
+//func (self *TimeVortex) NewEventIter() //TODO:future
 
 func (self *TimeVortex) lock() {
 	self.mtx.Lock()
@@ -201,6 +299,41 @@ func (self *TimeVortex) lock() {
 
 func (self *TimeVortex) unlock() {
 	self.mtx.Unlock()
+}
+
+type Options struct {
+	tool     string
+	category string
+}
+
+func NewOptions(tool string, category string) *Options {
+	return &Options{tool:tool, category:category}
+}
+
+func (self *Options) Match(b_category []byte, b_tool []byte) bool {
+	if self.category != "" {
+		b_c := []byte(self.category)
+		c_trunc := SIZE_LIMIT_CATEGORYNAME - len(b_c)
+		c_dummy := make([]byte, c_trunc)
+		b_c = append(b_c, c_dummy...)
+
+		if string(b_c) != string(b_category) {
+			return false
+		}
+	}
+
+	if self.tool != "" {
+		b_t := []byte(self.tool)
+		t_trunc := SIZE_LIMIT_TOOLNAME - len(b_t)
+		t_dummy := make([]byte, t_trunc)
+		b_t = append(b_t, t_dummy...)
+
+		if string(b_t) != string(b_tool) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func generateEvtID() []byte {
