@@ -138,20 +138,20 @@ func (self *TimeVortex) AddNewEvent(tool string, news *News) (*Event, error) {
 		return nil, err
 	}
 
-	if err := self.updateCategory(tool, CATEGORY_ORG, []string{string(eid)}); err != nil {
+	if err := self.updateCategory(tool, CATEGORY_ORG, [][]byte{eid}); err != nil {
 		return nil, err
 	}
 	return newEvent(eid, news), nil
 }
 
-func (self *TimeVortex) DeleteEvent(eid string) error {
+func (self *TimeVortex) DeleteEvent(eid []byte) error {
 	self.lock()
 	defer self.unlock()
 
-	return self.timeline.Delete([]byte(eid), nil)
+	return self.timeline.Delete(eid, nil)
 }
 
-func (self *TimeVortex) UpdateCategory(tool string, category string, eids []string) error {
+func (self *TimeVortex) UpdateCategory(tool string, category string, eids [][]byte) error {
 	self.lock()
 	defer self.unlock()
 
@@ -159,32 +159,38 @@ func (self *TimeVortex) UpdateCategory(tool string, category string, eids []stri
 
 }
 
-func (self *TimeVortex) updateCategory(tool string, category string, eids []string) error {
-	cid := make([]byte, 0, 4096)
+func (self *TimeVortex) updateCategory(tool string, category string, eids [][]byte) error {
+	b_tool := []byte(tool)
+	if len(b_tool) > SIZE_MAX_TOOLNAME {
+		return fmt.Errorf("over the tool value size.")
+	}
+	b_category := []byte(category)
+	if len(b_category) > SIZE_MAX_CATEGORYNAME {
+		return fmt.Errorf("over the category value size.")
+	}
 
+	cid := make([]byte, 0, 4096)
 	utime := uint64(time.Now().Unix())
 	b_utime := make([]byte, 8)
-	binary.LittleEndian.PutUint64(b_utime, utime)
+	binary.BigEndian.PutUint64(b_utime, utime)
 	cid = append(cid, b_utime...)
 
 	flg := make([]byte, 8)
 	cid = append(cid, flg...)
 
-	b_category := []byte(category)
 	c_trunc := SIZE_LIMIT_CATEGORYNAME - len(b_category)
 	c_dummy := make([]byte, c_trunc)
 	cid = append(cid, b_category...)
 	cid = append(cid, c_dummy...)
 
-	b_tool := []byte(tool)
 	t_trunc := SIZE_LIMIT_TOOLNAME - len(b_tool)
 	t_dummy := make([]byte, t_trunc)
 	cid = append(cid, b_tool...)
 	cid = append(cid, t_dummy...)
 
-	b_eids := make([]byte, 0, len(eids) * 16)
+	b_eids := []byte{}
 	for _, eid := range eids {
-		b_eids = append(b_eids, []byte(eid)...)
+		b_eids = append(b_eids, eid...)
 	}
 
 	if err := self.category.Put(cid, b_eids, nil); err != nil {
@@ -199,8 +205,8 @@ func (self *TimeVortex) Find(c context.Context, st time.Time, et time.Time, opt 
 
 	b_st := make([]byte, 8)
 	b_et := make([]byte, 8)
-	binary.LittleEndian.PutUint64(b_st, uint64(st.Unix()))
-	binary.LittleEndian.PutUint64(b_et, uint64(et.Unix()))
+	binary.BigEndian.PutUint64(b_st, uint64(st.Unix()))
+	binary.BigEndian.PutUint64(b_et, uint64(et.Unix()))
 
 	if opt == nil {
 		return self.walkEvent(c, b_st, b_et)
@@ -341,8 +347,8 @@ func generateEvtID() []byte {
 	uuidv2 := uint64(uuid.New().ID())
 	b_utime := make([]byte, 8)
 	b_uuidv2 := make([]byte, 8)
-	binary.LittleEndian.PutUint64(b_utime, utime)
-	binary.LittleEndian.PutUint64(b_uuidv2, uuidv2)
+	binary.BigEndian.PutUint64(b_utime, utime)
+	binary.BigEndian.PutUint64(b_uuidv2, uuidv2)
 
 	evt_id := append(b_utime, b_uuidv2...)
 	return evt_id
