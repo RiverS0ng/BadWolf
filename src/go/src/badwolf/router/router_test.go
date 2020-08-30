@@ -98,9 +98,9 @@ func TestLeft2Right(t *testing.T) {
 			t.Fatal("can't recv payload :", err)
 		}
 
-		buf := <- ch
-		if string(buf) != msg {
-			t.Fatal("can't recv payload :", buf)
+		f := <- ch
+		if string(f.Body()) != msg {
+			t.Fatal("can't recv payload :", f.Body())
 		}
 	}()
 
@@ -137,9 +137,9 @@ func TestRight2Left(t *testing.T) {
 			t.Fatal("can't recv :", err)
 		}
 
-		buf := <- ch
-		if string(buf) != msg {
-			t.Fatal("can't recv payload :", buf)
+		f := <- ch
+		if string(f.Body()) != msg {
+			t.Fatal("can't recv payload :", f.Body())
 		}
 	}()
 
@@ -200,9 +200,9 @@ func TestWaitKeepalive(t *testing.T) {
 			t.Fatal("can't recv :",err)
 		}
 
-		buf := <- ch
-		if string(buf) != msg {
-			t.Fatal("can't recv payload :", buf)
+		f := <- ch
+		if string(f.Body()) != msg {
+			t.Fatal("can't recv payload :", f.Body())
 		}
 	}()
 

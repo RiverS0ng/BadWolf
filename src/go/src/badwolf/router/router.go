@@ -1,5 +1,4 @@
 package router
-//MEMO packetとしての扱いが必要かも。どうしても送信元や命令を識別できないと処理が進まない
 
 import (
 	"io"
@@ -17,6 +16,8 @@ import (
 )
 
 const (
+	BLOADCAST_RID    uint8 = 0
+
 	FLG_PING         uint8 = 0
 	FLG_BYE          uint8 = 255
 	FLG_SYNC         uint8 = 2
@@ -31,7 +32,7 @@ type Router struct {
 	id     uint8
 	ports  map[uint8]*port
 
-	recv   chan []byte
+	recv   chan *Frame
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -69,7 +70,7 @@ func newRouter(bg_ctx context.Context, id uint8) *Router {
 	return &Router{
 		id:id,
 		ports:ports,
-		recv:make(chan []byte),
+		recv:make(chan *Frame),
 		ctx:ctx,
 		cancel:cancel,
 		mtx:new(sync.Mutex),
@@ -118,7 +119,7 @@ func (self *Router) send(dst uint8, body []byte) error {
 	return port.Send(body)
 }
 
-func (self *Router) Recv() (chan []byte, error) {
+func (self *Router) Recv() (chan *Frame, error) {
 	self.lock()
 	defer self.unlock()
 
@@ -237,8 +238,8 @@ type port struct {
 	left  uint8
 	right uint8
 
-	sendq chan *frame
-	recvq chan *frame
+	sendq chan *Frame
+	recvq chan *Frame
 
 	send_lock *sync.Mutex
 	ctx context.Context
@@ -248,8 +249,8 @@ func newPort(ctx context.Context, con net.Conn, left uint8) *port {
 	self := &port{
 		left:left,
 		con:con,
-		sendq:make(chan *frame),
-		recvq:make(chan *frame),
+		sendq:make(chan *Frame),
+		recvq:make(chan *Frame),
 		send_lock:new(sync.Mutex),
 		ctx:ctx,
 	}
@@ -265,34 +266,34 @@ func (self *port) RightId() uint8 {
 }
 
 func (self *port) Send(bs []byte) error {
-	self.send(newFrame(FLG_DATA, bs))
+	self.send(newFrame(self.left, self.right, FLG_DATA, bs))
 	return nil
 }
 
-func (self *port) connectRecvPipe(b_ch chan []byte) {
+func (self *port) connectRecvPipe(b_ch chan *Frame) {
 	go func() {
 		for {
 			select {
 			case <- self.ctx.Done():
 				return
 			case f := <- self.recvq:
-				b_ch <- f.Body()
+				b_ch <- f
 			}
 
 		}
 	}()
 }
 
-func (self *port) send(f *frame) {
+func (self *port) send(f *Frame) {
 	self.sendq <- f
 }
 
-func (self *port) recv() chan *frame {
+func (self *port) recv() chan *Frame {
 	return self.recvq
 }
 
 func (self *port) run_sender() {
-	f_ping := newFrame(FLG_PING, []byte{0})
+	f_ping := newFrame(self.left, self.right, FLG_PING, []byte{0})
 
 	t_range := time.Second * time.Duration(TIMEOUT_LIMIT - 1)
 	timer := time.NewTimer(t_range)
@@ -323,7 +324,7 @@ func (self *port) run_sender() {
 	}
 }
 
-func (self *port) write(f *frame) error {
+func (self *port) write(f *Frame) error {
 	self.send_lock.Lock()
 	defer self.send_lock.Unlock()
 
@@ -333,7 +334,7 @@ func (self *port) write(f *frame) error {
 		return err
 	}
 	if l != len(bs) {
-		return fmt.Errorf("can't send frame")
+		return fmt.Errorf("can't send Frame")
 	}
 	self.con.Write([]byte(END_OF_FRAME))
 
@@ -436,7 +437,7 @@ func (self *port) getRightId() error {
 	return nil
 }
 
-func connect(ctx context.Context, id uint8, path string, b_ch chan []byte) (*port, error) {
+func connect(ctx context.Context, id uint8, path string, b_ch chan *Frame) (*port, error) {
 	con, err := net.Dial("unix", path)
 	if err != nil {
 		return nil, err
@@ -444,12 +445,12 @@ func connect(ctx context.Context, id uint8, path string, b_ch chan []byte) (*por
 	return linkup(ctx, id, con, b_ch)
 }
 
-func linkup(ctx context.Context, id uint8, con net.Conn, b_ch chan []byte) (*port, error) {
+func linkup(ctx context.Context, id uint8, con net.Conn, b_ch chan *Frame) (*port, error) {
 	port := newPort(ctx, con, id)
 
 	go func() {
 		body_from := []byte{byte(id)}
-		port.send(newFrame(FLG_SYNC, body_from))
+		port.send(newFrame(id, BLOADCAST_RID, FLG_SYNC, body_from))
 	}()
 
 	if err := port.getRightId(); err != nil {
@@ -473,33 +474,45 @@ func (self *port) close() error {
 	return ucon.Close()
 }
 
-type frame struct {
-	flag      uint8
-	body      []byte
+type Frame struct {
+	src  uint8
+	dst  uint8
+	flag uint8
+	body []byte
 }
 
-func newFrame(flg uint8, body []byte) *frame {
+func newFrame(src uint8, dst uint8, flg uint8, body []byte) *Frame {
 	dup_body := make([]byte, len(body))
 	copy(dup_body, body)
 
-	return &frame{flag:flg, body:body}
+	return &Frame{src:src, dst:dst, flag:flg, body:body}
 }
 
-func bytes2frame(bs []byte) (*frame, error) {
-	if len(bs) < 2 {
+func bytes2frame(bs []byte) (*Frame, error) {
+	if len(bs) < 4 {
 		return nil, fmt.Errorf("too short frame size.")
 	}
-	return &frame{flag:bs[0], body:bs[1:]}, nil
+	return &Frame{src:bs[0], dst:bs[1], flag:bs[2], body:bs[3:]}, nil
 }
 
-func (self *frame) Bytes() []byte {
+func (self *Frame) Bytes() []byte {
 	var bs []byte
+	bs = append(bs, self.src)
+	bs = append(bs, self.dst)
 	bs = append(bs, self.flag)
 	bs = append(bs, self.body...)
 	return bs
 }
 
-func (self *frame) Body() []byte {
+func (self *Frame) SrcId() uint8 {
+	return self.src
+}
+
+func (self *Frame) DstId() uint8 {
+	return self.dst
+}
+
+func (self *Frame) Body() []byte {
 	dup_body := make([]byte, len(self.body))
 	copy(dup_body, self.body)
 	return dup_body
