@@ -1,4 +1,5 @@
 package router
+//MEMO packetとしての扱いが必要かも。どうしても送信元や命令を識別できないと処理が進まない
 
 import (
 	"io"
@@ -16,11 +17,6 @@ import (
 )
 
 const (
-	TYPE_CORE      uint8 = 0
-	TYPE_NOTICE    uint8 = 1
-	TYPE_ANLYZ     uint8 = 2
-	TYPE_BLOADCAST uint8 = 255
-
 	FLG_PING         uint8 = 0
 	FLG_BYE          uint8 = 255
 	FLG_SYNC         uint8 = 2
@@ -32,10 +28,10 @@ const (
 )
 
 type Router struct {
-	rtype  uint8
-	plists  map[uint8][]*port
+	id     uint8
+	ports  map[uint8]*port
 
-	recv    chan []byte
+	recv   chan []byte
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -44,21 +40,35 @@ type Router struct {
 	wg     *sync.WaitGroup
 }
 
-func NewRouter(bg_ctx context.Context, rtype uint8) *Router {
+func NewRouter(bg_ctx context.Context, id uint8, path string) (*Router, error) {
+	r := newRouter(bg_ctx, id)
+
+	if err := r.CreatePort(path); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func Connect(bg_ctx context.Context, id uint8, path string) (*Router, error) {
+	r := newRouter(bg_ctx, id)
+
+	if err := r.ConnectPort(path); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func newRouter(bg_ctx context.Context, id uint8) *Router {
 	if bg_ctx == nil {
 		bg_ctx = context.Background()
 	}
 	ctx, cancel := context.WithCancel(bg_ctx)
 
-	plists := make(map[uint8][]*port)
-	plists[TYPE_CORE] = []*port{}
-	plists[TYPE_BLOADCAST] = []*port{}
-	plists[TYPE_ANLYZ] = []*port{}
-	plists[TYPE_NOTICE] = []*port{}
+	ports := make(map[uint8]*port)
 
 	return &Router{
-		rtype:rtype,
-		plists:plists,
+		id:id,
+		ports:ports,
 		recv:make(chan []byte),
 		ctx:ctx,
 		cancel:cancel,
@@ -88,30 +98,24 @@ func (self *Router) CreatePort(path string) error {
 	return self.listen(path)
 }
 
-func (self *Router) Send(dst uint8, body []byte) error {
+func (self *Router) Send(dstid uint8, body []byte) error {
 	self.lock()
 	defer self.unlock()
 
-	return self.send(dst, body)
+	return self.send(dstid, body)
 }
 
 func (self *Router) send(dst uint8, body []byte) error {
-	if dst == self.rtype {
-		return fmt.Errorf("can't send to same type.")
+	if dst == self.id {
+		return fmt.Errorf("can't send to same id.")
 	}
 
-	plist, ok := self.plists[dst]
+	port, ok := self.ports[dst]
 	if !ok {
 		return fmt.Errorf("undefined port table.")
 	}
-	if len(plist) < 1 {
-		return fmt.Errorf("undefined port entry.")
-	}
 
-	for _, port := range plist {
-		go port.Send(body)
-	}
-	return nil
+	return port.Send(body)
 }
 
 func (self *Router) Recv() (chan []byte, error) {
@@ -125,12 +129,10 @@ func (self *Router) Recv() (chan []byte, error) {
 }
 
 func (self *Router) havePort() bool {
-	for _, plist := range self.plists {
-		if len(plist) > 0 {
-			return true
-		}
+	if len(self.ports) < 1 {
+		return false
 	}
-	return false
+	return true
 }
 
 func (self *Router) listen(path string) error {
@@ -172,7 +174,7 @@ func (self *Router) listen(path string) error {
 					self.lock()
 					defer self.unlock()
 
-					port, err := linkup(c_ctx, self.rtype, rcv.sess, self.recv)
+					port, err := linkup(c_ctx, self.id, rcv.sess, self.recv)
 					if err != nil {
 						logger.PrintErr("Router.listen: %s", err)
 						return
@@ -189,7 +191,7 @@ func (self *Router) listen(path string) error {
 
 func (self *Router) dial(path string) error {
 	c_ctx, _ := context.WithCancel(self.ctx)
-	port, err := connect(c_ctx, self.rtype, path, self.recv)
+	port, err := connect(c_ctx, self.id, path, self.recv)
 	if err != nil {
 		return err
 	}
@@ -197,18 +199,17 @@ func (self *Router) dial(path string) error {
 }
 
 func (self *Router) append(port *port) error {
-	if self.plists == nil {
+	if self.ports == nil {
 		return fmt.Errorf("undefined port list")
 	}
 
-	tgt := port.RightType()
-	plist, ok := self.plists[tgt]
-	if !ok {
-		return fmt.Errorf("undefined port list")
+	tgt := port.RightId()
+	_, ok := self.ports[tgt]
+	if ok {
+		return fmt.Errorf("already exsit id")
 	}
 
-	plist = append(plist, port)
-	self.plists[tgt] = plist
+	self.ports[tgt] = port
 	return nil
 }
 
@@ -216,10 +217,8 @@ func (self *Router) close() error {
 	defer self.wg.Wait()
 	self.cancel()
 
-	for _, plist := range self.plists {
-		for _, port := range plist {
-			port.Close()
-		}
+	for _, port := range self.ports {
+		port.Close()
 	}
 	return nil
 }
@@ -261,7 +260,7 @@ func newPort(ctx context.Context, con net.Conn, left uint8) *port {
 	return self
 }
 
-func (self *port) RightType() uint8 {
+func (self *port) RightId() uint8 {
 	return self.right
 }
 
@@ -408,8 +407,8 @@ func (self *port) run_recver() {
 	}
 }
 
-func (self *port) getRightType() error {
-	var right_rtype uint8
+func (self *port) getRightId() error {
+	var right_id uint8
 
 	timer := time.NewTimer(time.Second * time.Duration(TIMEOUT_LIMIT))
 	defer timer.Stop()
@@ -427,33 +426,33 @@ func (self *port) getRightType() error {
 			if f.flag != FLG_SYNC {
 				return fmt.Errorf("not expect flag.")
 			}
-			right_rtype = bs[0]
+			right_id = bs[0]
 	}
-	if self.left == right_rtype {
-		return fmt.Errorf("can't connect type.")
+	if self.left == right_id {
+		return fmt.Errorf("can't connect to same id.")
 	}
 
-	self.right = right_rtype
+	self.right = right_id
 	return nil
 }
 
-func connect(ctx context.Context, rtype uint8, path string, b_ch chan []byte) (*port, error) {
+func connect(ctx context.Context, id uint8, path string, b_ch chan []byte) (*port, error) {
 	con, err := net.Dial("unix", path)
 	if err != nil {
 		return nil, err
 	}
-	return linkup(ctx, rtype, con, b_ch)
+	return linkup(ctx, id, con, b_ch)
 }
 
-func linkup(ctx context.Context, rtype uint8, con net.Conn, b_ch chan []byte) (*port, error) {
-	port := newPort(ctx, con, rtype)
+func linkup(ctx context.Context, id uint8, con net.Conn, b_ch chan []byte) (*port, error) {
+	port := newPort(ctx, con, id)
 
 	go func() {
-		body_from := []byte{byte(rtype)}
+		body_from := []byte{byte(id)}
 		port.send(newFrame(FLG_SYNC, body_from))
 	}()
 
-	if err := port.getRightType(); err != nil {
+	if err := port.getRightId(); err != nil {
 		port.close()
 		return nil, err
 	}

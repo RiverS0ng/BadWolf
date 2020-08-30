@@ -7,91 +7,86 @@ import (
 	"time"
 )
 
-const TestSockPath = "/var/tmp/testsock"
+const (
+	TestSockPath string = "/var/tmp/testsock"
+	TestCore uint8 = 1
+	TestNotice uint8 = 2
+)
 
-func TestCreate(t *testing.T) {
-	rt := NewRouter(nil, TYPE_CORE)
-	if rt == nil {
-		t.Fatal("return address is nil")
-	}
-	defer rt.Close()
-	return
-}
 func TestCreatePort(t *testing.T) {
-	rt1 := NewRouter(nil, TYPE_CORE)
-	defer rt1.Close()
-
-	if err := rt1.CreatePort(TestSockPath); err != nil {
+	rt1, err := NewRouter(nil, TestCore, TestSockPath)
+	if err != nil {
 		t.Fatal("can't create port : ", err)
 	}
+	defer rt1.Close()
+
 	return
 }
 
 func TestUndefinedSend(t *testing.T) {
-	rt1 := NewRouter(nil, TYPE_CORE)
+	rt1, err := NewRouter(nil, TestCore, TestSockPath)
+	if err != nil {
+		t.Fatal("can't create port : ", err)
+	}
 	defer rt1.Close()
 
-	msg := "test"
-
-	err := rt1.Send(TYPE_NOTICE, []byte(msg))
-	if err == nil {
+	if err := rt1.Send(TestNotice, []byte("test message")); err == nil {
 		t.Fatal("sended undefined port")
 	}
 	return
 }
 
 func TestUndefinedRecv(t *testing.T) {
-	rt1 := NewRouter(nil, TYPE_CORE)
+	rt1, err := NewRouter(nil, TestCore, TestSockPath)
+	if err != nil {
+		t.Fatal("can't create port : ", err)
+	}
 	defer rt1.Close()
 
-	_, err := rt1.Recv()
-	if err == nil {
+	if _, err := rt1.Recv(); err == nil {
 		t.Fatal("started recv undefined port")
 	}
 	return
 }
 
 func TestConnectPort(t *testing.T) {
-	rt1 := NewRouter(nil, TYPE_CORE)
-	defer rt1.Close()
-	rt2 := NewRouter(nil, TYPE_NOTICE)
-	defer rt2.Close()
-
-	if err := rt1.CreatePort(TestSockPath); err != nil {
+	rt1, err := NewRouter(nil, TestCore, TestSockPath)
+	if err != nil {
 		t.Fatal("can't create port : ", err)
 	}
-	if err := rt2.ConnectPort(TestSockPath); err != nil {
-		t.Fatal("can't connect port : ", err)
+	defer rt1.Close()
+
+	rt2, err := Connect(nil, TestNotice, TestSockPath)
+	if err != nil {
+		t.Fatal("can't create port : ", err)
 	}
+	defer rt2.Close()
 	return
 }
 
 func TestConnectUndefinedPort(t *testing.T) {
-	rt1 := NewRouter(nil, TYPE_CORE)
-	defer rt1.Close()
-
-	err := rt1.ConnectPort(TestSockPath)
+	rt1, err := Connect(nil, TestCore, TestSockPath)
 	if err == nil {
+		defer rt1.Close()
 		t.Fatal("connected undefined port")
 	}
 	return
 }
 
 func TestLeft2Right(t *testing.T) {
-	rt1 := NewRouter(nil, TYPE_CORE)
-	defer rt1.Close()
-	rt2 := NewRouter(nil, TYPE_NOTICE)
-	defer rt2.Close()
-
-	if err := rt1.CreatePort(TestSockPath); err != nil {
+	rt1, err := NewRouter(nil, TestCore, TestSockPath)
+	if err != nil {
 		t.Fatal("can't create port : ", err)
 	}
-	if err := rt2.ConnectPort(TestSockPath); err != nil {
-		t.Fatal("can't connect port : ", err)
+	defer rt1.Close()
+
+	rt2, err := Connect(nil, TestNotice, TestSockPath)
+	if err != nil {
+		t.Fatal("can't create port : ", err)
 	}
+	defer rt2.Close()
 
 	msg := "test"
-
 
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
@@ -109,7 +104,7 @@ func TestLeft2Right(t *testing.T) {
 		}
 	}()
 
-	if err := rt1.Send(TYPE_NOTICE, []byte(msg)); err != nil {
+	if err := rt1.Send(TestNotice, []byte(msg)); err != nil {
 		t.Fatal("can't send packet : ", err)
 	}
 
@@ -118,17 +113,17 @@ func TestLeft2Right(t *testing.T) {
 }
 
 func TestRight2Left(t *testing.T) {
-	rt1 := NewRouter(nil, TYPE_CORE)
-	defer rt1.Close()
-	rt2 := NewRouter(nil, TYPE_NOTICE)
-	defer rt2.Close()
-
-	if err := rt1.CreatePort(TestSockPath); err != nil {
+	rt1, err := NewRouter(nil, TestCore, TestSockPath)
+	if err != nil {
 		t.Fatal("can't create port : ", err)
 	}
-	if err := rt2.ConnectPort(TestSockPath); err != nil {
-		t.Fatal("can't connect port : ", err)
+	defer rt1.Close()
+
+	rt2, err := Connect(nil, TestNotice, TestSockPath)
+	if err != nil {
+		t.Fatal("can't create port : ", err)
 	}
+	defer rt2.Close()
 
 	msg := "test"
 
@@ -148,7 +143,7 @@ func TestRight2Left(t *testing.T) {
 		}
 	}()
 
-	if err := rt2.Send(TYPE_CORE, []byte(msg)); err != nil {
+	if err := rt2.Send(TestCore, []byte(msg)); err != nil {
 		t.Fatal("can't send packet : ", err)
 	}
 
@@ -157,38 +152,39 @@ func TestRight2Left(t *testing.T) {
 }
 
 func TestSendToUnconnectType(t *testing.T) {
-	rt1 := NewRouter(nil, TYPE_CORE)
-	defer rt1.Close()
-	rt2 := NewRouter(nil, TYPE_NOTICE)
-	defer rt2.Close()
-
-	if err := rt1.CreatePort(TestSockPath); err != nil {
+	rt1, err := NewRouter(nil, TestCore, TestSockPath)
+	if err != nil {
 		t.Fatal("can't create port : ", err)
 	}
-	if err := rt2.ConnectPort(TestSockPath); err != nil {
-		t.Fatal("can't connect port : ", err)
+	defer rt1.Close()
+
+	rt2, err := Connect(nil, TestNotice, TestSockPath)
+	if err != nil {
+		t.Fatal("can't create port : ", err)
 	}
+	defer rt2.Close()
 
 	msg := "test"
+	var unkown_id uint8 = 10
 
-	if err := rt1.Send(TYPE_ANLYZ, []byte(msg)); err == nil {
+	if err := rt1.Send(unkown_id, []byte(msg)); err == nil {
 		t.Fatal("does not return error")
 	}
 	return
 }
 
 func TestWaitKeepalive(t *testing.T) {
-	rt1 := NewRouter(nil, TYPE_CORE)
-	defer rt1.Close()
-	rt2 := NewRouter(nil, TYPE_NOTICE)
-	defer rt2.Close()
-
-	if err := rt1.CreatePort(TestSockPath); err != nil {
+	rt1, err := NewRouter(nil, TestCore, TestSockPath)
+	if err != nil {
 		t.Fatal("can't create port : ", err)
 	}
-	if err := rt2.ConnectPort(TestSockPath); err != nil {
-		t.Fatal("can't connect port : ", err)
+	defer rt1.Close()
+
+	rt2, err := Connect(nil, TestNotice, TestSockPath)
+	if err != nil {
+		t.Fatal("can't create port : ", err)
 	}
+	defer rt2.Close()
 
 	msg := "test"
 
@@ -210,7 +206,7 @@ func TestWaitKeepalive(t *testing.T) {
 		}
 	}()
 
-	if err := rt1.Send(TYPE_NOTICE, []byte(msg)); err != nil {
+	if err := rt1.Send(TestNotice, []byte(msg)); err != nil {
 		t.Fatal("can't send packet : ", err)
 	}
 
