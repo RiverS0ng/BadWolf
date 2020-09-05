@@ -1,4 +1,4 @@
-package badwolf
+package timevortex
 
 import (
 	"time"
