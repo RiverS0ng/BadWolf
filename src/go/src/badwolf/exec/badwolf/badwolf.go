@@ -98,18 +98,18 @@ func run_recver(wg *sync.WaitGroup, ctx context.Context, rt *router.Router, tv *
 		defer wg.Done()
 		defer close(ev_ch_a)
 		//defer close(ev_ch_n)
+		defer logger.PrintMsg("run_recver: exiting...")
 
 		for {
 			select {
 			case <- ctx.Done():
-				logger.PrintMsg("run_recver: canceled ctx")
 				return
 			case f, ok := <- rt.Recv():
 				if !ok {
-					logger.PrintMsg("run_recver: closed f_ch")
 					return
 				}
 
+				logger.PrintMsg("run_recver: got new event.")
 				news, err := timevortex.Bytes2News(f.Body())
 				if err != nil {
 					logger.PrintErr("run_recver: cant convert frame to news : %s", err)
@@ -121,6 +121,7 @@ func run_recver(wg *sync.WaitGroup, ctx context.Context, rt *router.Router, tv *
 					logger.PrintErr("run_recver: failed add event : %s", err)
 					continue
 				}
+				logger.PrintMsg("run_recver: recorded new event.")
 
 				go func() {
 					select {
@@ -249,7 +250,7 @@ func GenerateFeed(ctx context.Context, tv *timevortex.TimeVortex,
 		return nil, err
 	}
 	if end == "" {
-		end = time.Now().Format(layout)
+		end = time.Now().AddDate(0, 0, 1).Format(layout)
 	}
 	et, err := time.Parse(layout, end)
 	if err != nil {
