@@ -119,14 +119,11 @@ func (self *Router) send(dst uint8, body []byte) error {
 	return port.Send(body)
 }
 
-func (self *Router) Recv() (chan *Frame, error) {
+func (self *Router) Recv() chan *Frame {
 	self.lock()
 	defer self.unlock()
 
-	if !self.havePort() {
-		return self.recv, fmt.Errorf("not connect port")
-	}
-	return self.recv, nil
+	return self.recv
 }
 
 func (self *Router) havePort() bool {

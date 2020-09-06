@@ -97,12 +97,3 @@ func TestDelete(t *testing.T) {
 		t.Fatal("Delete Failed. :", err)
 	}
 }
-
-func TestNotExistOpen(t *testing.T) {
-	tv, err := OpenTimeVortex(nil, TestPath)
-	if err == nil {
-		tv.Close()
-		t.Fatal("Open Successed.")
-	}
-	return
-}

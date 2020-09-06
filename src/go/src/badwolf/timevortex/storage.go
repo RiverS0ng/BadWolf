@@ -91,12 +91,12 @@ func OpenTimeVortex(bg_ctx context.Context, path string) (*TimeVortex, error) {
 
 	c_path := filepath.Clean(path)
 	tl_path := filepath.Join(c_path, FNAME_TIMELINE)
-	timeline, err := leveldb.OpenFile(tl_path, &opt.Options{ ErrorIfMissing: true })
+	timeline, err := leveldb.OpenFile(tl_path, &opt.Options{ ErrorIfMissing: false })
 	if err != nil {
 		return nil, err
 	}
 	ct_path := filepath.Join(c_path, FNAME_CATEGORY)
-	category, err := leveldb.OpenFile(ct_path, &opt.Options{ ErrorIfMissing: true })
+	category, err := leveldb.OpenFile(ct_path, &opt.Options{ ErrorIfMissing: false })
 	if err != nil {
 		return nil, err
 	}

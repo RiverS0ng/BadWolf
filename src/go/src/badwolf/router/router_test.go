@@ -36,19 +36,6 @@ func TestUndefinedSend(t *testing.T) {
 	return
 }
 
-func TestUndefinedRecv(t *testing.T) {
-	rt1, err := NewRouter(nil, TestCore, TestSockPath)
-	if err != nil {
-		t.Fatal("can't create port : ", err)
-	}
-	defer rt1.Close()
-
-	if _, err := rt1.Recv(); err == nil {
-		t.Fatal("started recv undefined port")
-	}
-	return
-}
-
 func TestConnectPort(t *testing.T) {
 	rt1, err := NewRouter(nil, TestCore, TestSockPath)
 	if err != nil {
@@ -93,11 +80,7 @@ func TestLeft2Right(t *testing.T) {
 	go func() {
 		defer wg.Done()
 
-		ch, err := rt2.Recv()
-		if err != nil {
-			t.Fatal("can't recv payload :", err)
-		}
-
+		ch := rt2.Recv()
 		f := <- ch
 		if string(f.Body()) != msg {
 			t.Fatal("can't recv payload :", f.Body())
@@ -132,11 +115,7 @@ func TestRight2Left(t *testing.T) {
 	go func() {
 		defer wg.Done()
 
-		ch, err := rt1.Recv()
-		if err != nil {
-			t.Fatal("can't recv :", err)
-		}
-
+		ch := rt1.Recv()
 		f := <- ch
 		if string(f.Body()) != msg {
 			t.Fatal("can't recv payload :", f.Body())
@@ -195,11 +174,7 @@ func TestWaitKeepalive(t *testing.T) {
 	go func() {
 		defer wg.Done()
 
-		ch, err := rt2.Recv()
-		if err != nil {
-			t.Fatal("can't recv :",err)
-		}
-
+		ch := rt2.Recv()
 		f := <- ch
 		if string(f.Body()) != msg {
 			t.Fatal("can't recv payload :", f.Body())

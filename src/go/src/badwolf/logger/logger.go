@@ -10,5 +10,5 @@ func PrintMsg(s string, msg ...interface{}) {
 }
 
 func PrintErr(s string, msg ...interface{}) {
-	fmt.Fprintf(os.Stderr, s + "\n" , msg...)
+	fmt.Fprintf(os.Stderr, "err: " + s + "\n" , msg...)
 }
