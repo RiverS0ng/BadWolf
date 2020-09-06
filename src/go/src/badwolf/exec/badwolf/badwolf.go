@@ -28,39 +28,41 @@ var (
 )
 
 func badwolf() error {
-	logger.PrintMsg("badwolf start")
-	defer logger.PrintMsg("badwolf Exit")
+	logger.PrintMsg("starting badwolf....")
+	defer logger.PrintMsg("Exit badwolf")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	signalInterruptHandler(cancel)
 
-	logger.PrintMsg("OpenTimeVortex, %s", TimeVortexPath)
+	logger.PrintMsg("Open Storage : %s", TimeVortexPath)
 	tv, err := timevortex.OpenTimeVortex(newChildContext(ctx), TimeVortexPath)
 	if err != nil {
 		return err
 	}
-	defer logger.PrintMsg("ClosedTimeVortex, %s", TimeVortexPath)
+	defer logger.PrintMsg("Closed Storage.")
 	defer tv.Close()
+	defer logger.PrintMsg("Closing Storage : %s", TimeVortexPath)
 
-	logger.PrintMsg("Start Router, %s", SocketPath)
+	logger.PrintMsg("Start the router, connect to socket : %s", SocketPath)
 	rt, err := router.NewRouter(newChildContext(ctx), ROUTER_ID, SocketPath)
 	if err != nil {
 		return err
 	}
-	defer logger.PrintMsg("Closed Router")
+	defer logger.PrintMsg("Closed the router.")
 	defer rt.Close()
 
 	wg := new(sync.WaitGroup)
 	defer wg.Wait()
 
-	logger.PrintMsg("start the recver")
+	logger.PrintMsg("Start the recver")
 	if err := run_recver(wg, newChildContext(ctx), rt, tv); err != nil {
 		return err
 	}
-	logger.PrintMsg("start the publisher")
+	logger.PrintMsg("Start the publisher")
 	if err := run_publisher(wg, newChildContext(ctx), tv); err != nil {
 		return err
 	}
+	logger.PrintMsg("badwolf running!!")
 	return nil
 }
 
