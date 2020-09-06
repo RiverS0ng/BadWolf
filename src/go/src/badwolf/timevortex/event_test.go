@@ -28,7 +28,7 @@ func TestEvent2Byte(t *testing.T) {
 	if n.Summary != n2.Summary {
 		t.Fatal("Does not match summary.")
 	}
-	if n.PubDate != n2.PubDate {
+	if n.PubDate.Equal(n2.PubDate) {
 		t.Fatal("Does not match publish date.")
 	}
 	if n.Source != n2.Source {
@@ -44,7 +44,7 @@ func testDummyNews() *News {
 		Title:"Dummy news",
 		Link:"https://www.dummy.example.com",
 		Summary: "This is a dummy news.",
-		PubDate: 0,
+		PubDate: time.Now(),
 		Source: "The name of RSS Channel.",
 		Recorder: "The name of bw_getter",
 	}

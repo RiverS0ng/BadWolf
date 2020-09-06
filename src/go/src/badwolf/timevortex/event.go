@@ -1,6 +1,7 @@
 package timevortex
 
 import (
+	"time"
 	"bytes"
 )
 
@@ -17,12 +18,12 @@ func init() {
 }
 
 type News struct {
-	Title   string
-	Link    string
-	Summary string
-	PubDate uint64
-	Source  string
-	Recorder  string
+	Title    string
+	Link     string
+	Summary  string
+	PubDate  time.Time
+	Source   string
+	Recorder string
 }
 
 func Bytes2News(bs []byte) (*News, error) {
@@ -54,6 +55,30 @@ func newEvent(id []byte, news *News) *Event {
 	cp_id := make([]byte, 16)
 	copy(cp_id, id)
 	return &Event{id:cp_id, data:news}
+}
+
+func (self *Event) Title() string {
+	return self.data.Title
+}
+
+func (self *Event) Link() string {
+	return self.data.Link
+}
+
+func (self *Event) Summary() string {
+	return self.data.Summary
+}
+
+func (self *Event) Recorder() string {
+	return self.data.Recorder
+}
+
+func (self *Event) Source() string {
+	return self.data.Source
+}
+
+func (self *Event) Time() time.Time {
+	return self.data.PubDate
 }
 
 func (self *Event) Id() []byte {

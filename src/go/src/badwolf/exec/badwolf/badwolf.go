@@ -7,8 +7,13 @@ import (
 	"flag"
 	"path/filepath"
 	"sync"
+	"time"
 	"context"
 	"net/http"
+)
+
+import (
+	"github.com/gorilla/feeds"
 )
 
 import (
@@ -174,7 +179,34 @@ func run_publisher(wg *sync.WaitGroup, ctx context.Context, tv *timevortex.TimeV
 	sv := &http.Server{
 		Addr: "127.0.0.1:" + ListenPort,
 	}
-	http.HandleFunc("/", request_handler)
+	http.HandleFunc("/", func (w http.ResponseWriter, r *http.Request) {
+		logger.PrintMsg("[HTTP Request] %s, %s, %s", r.RemoteAddr, r.Method, r.URL)
+		switch r.Method {
+		case "GET" :
+			start := r.URL.Query().Get("start")
+			end := r.URL.Query().Get("end")
+			category := r.URL.Query().Get("category")
+			tool := r.URL.Query().Get("tool")
+
+			f, err := GenerateFeed(ctx, tv, start, end, category, tool)
+			if err != nil {
+				logger.PrintErr("[HTTP Request] GenerateFeed : %s", err)
+				http.Error(w, "Failed: generate feed body.", http.StatusInternalServerError)
+				return
+			}
+			rss, err := f.ToRss()
+			if err != nil {
+				logger.PrintErr("[HTTP Request] GenerateFeed : %s", err)
+				http.Error(w, "Failed: generate feed body.", http.StatusInternalServerError)
+				return
+			}
+
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, rss + "\n")
+		default :
+			http.Error(w, "Method not allowed.", http.StatusBadRequest)
+		}
+	})
 
 	wg.Add(1)
 	go func() {
@@ -205,8 +237,55 @@ func run_publisher(wg *sync.WaitGroup, ctx context.Context, tv *timevortex.TimeV
 	return nil
 }
 
-func request_handler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprint(w, "hello!\n")
+func GenerateFeed(ctx context.Context, tv *timevortex.TimeVortex,
+	start string, end string, category string, tool string) (*feeds.Feed, error) {
+	layout := "20060102"
+
+	if start == "" {
+		start = time.Now().AddDate(0, 0, -14).Format(layout)
+	}
+	st, err := time.Parse(layout, start)
+	if err != nil {
+		return nil, err
+	}
+	if end == "" {
+		end = time.Now().Format(layout)
+	}
+	et, err := time.Parse(layout, end)
+	if err != nil {
+		return nil, err
+	}
+	var opt *timevortex.Options
+	if tool != "" || category != "" {
+		opt = timevortex.NewOptions(tool, category)
+	}
+
+	evts, err := tv.Find(ctx, st, et, opt)
+	if err != nil {
+		return nil, err
+	}
+
+	items := []*feeds.Item{}
+	for _, evt := range evts {
+		item := &feeds.Item{
+			Title: evt.Title(),
+			Link:  &feeds.Link{Href: evt.Link()},
+			Description: evt.Summary(),
+			Author: &feeds.Author{Name: evt.Recorder()},
+			Created: evt.Time(),
+		}
+		items = append(items, item)
+	}
+
+	body := &feeds.Feed{
+		Title:       "rss feed",
+		Link:        &feeds.Link{Href: "http://example.com"},
+		Description: "rss feed description",
+		Author:      &feeds.Author{Name: "john smith", Email: "donotreply@example.com"},
+		Created:     time.Now(),
+		Items:       items,
+	}
+	return body, nil
 }
 
 func die(s string, msg ...interface{}) {
