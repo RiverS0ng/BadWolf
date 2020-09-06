@@ -1,9 +1,8 @@
 package main
 
-//import "log"
-
 import (
 	"os"
+	"os/signal"
 	"fmt"
 	"flag"
 	"path/filepath"
@@ -29,31 +28,49 @@ var (
 )
 
 func badwolf() error {
+	logger.PrintMsg("badwolf start")
+	defer logger.PrintMsg("badwolf Exit")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	signalInterruptHandler(cancel)
 
+	logger.PrintMsg("OpenTimeVortex, %s", TimeVortexPath)
 	tv, err := timevortex.OpenTimeVortex(newChildContext(ctx), TimeVortexPath)
 	if err != nil {
 		return err
 	}
+	defer logger.PrintMsg("ClosedTimeVortex, %s", TimeVortexPath)
 	defer tv.Close()
 
+	logger.PrintMsg("Start Router, %s", SocketPath)
 	rt, err := router.NewRouter(newChildContext(ctx), ROUTER_ID, SocketPath)
 	if err != nil {
 		return err
 	}
+	defer logger.PrintMsg("Closed Router")
 	defer rt.Close()
 
 	wg := new(sync.WaitGroup)
 	defer wg.Wait()
 
+	logger.PrintMsg("start the recver")
 	if err := run_recver(wg, newChildContext(ctx), rt, tv); err != nil {
 		return err
 	}
+	logger.PrintMsg("start the publisher")
 	if err := run_publisher(wg, newChildContext(ctx), tv); err != nil {
 		return err
 	}
 	return nil
+}
+
+func signalInterruptHandler(f func()) {
+	go func() {
+		s := make(chan os.Signal)
+		signal.Notify(s, os.Interrupt)
+		<- s
+		f()
+	}()
 }
 
 func run_recver(wg *sync.WaitGroup, ctx context.Context, rt *router.Router, tv *timevortex.TimeVortex) error {
@@ -152,17 +169,35 @@ func run_noticer(wg *sync.WaitGroup, ctx context.Context, evt_ch chan *timevorte
 */
 
 func run_publisher(wg *sync.WaitGroup, ctx context.Context, tv *timevortex.TimeVortex) error {
-	wg.Add(1)
+	sv := &http.Server{
+		Addr: "127.0.0.1:" + ListenPort,
+	}
+	http.HandleFunc("/", request_handler)
 
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
 
-		http.HandleFunc("/", request_handler)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 
-		if err := http.ListenAndServe("127.0.0.1:" + ListenPort, nil); err != nil {
-			logger.PrintErr("run_publisher: httpListenAndServe: %s", err)
-			return
-		}
+			if err := sv.ListenAndServe(); err != nil {
+				if err != http.ErrServerClosed {
+					logger.PrintErr("run_publisher: httpListenAndServe: %s", err)
+				}
+				logger.PrintMsg("run_publisher: httpListenAndServe: ServerClose")
+				return
+			}
+		}()
+
+		go func() {
+			<- ctx.Done()
+			if err := sv.Shutdown(ctx); err != nil {
+				logger.PrintErr("run_publisher: httpListenAndServe: %s", err)
+				return
+			}
+		}()
 	}()
 
 	return nil
