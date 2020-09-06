@@ -235,6 +235,7 @@ type port struct {
 	left  uint8
 	right uint8
 
+	ext_sendq chan *Frame
 	sendq chan *Frame
 	recvq chan *Frame
 
@@ -246,6 +247,7 @@ func newPort(ctx context.Context, con net.Conn, left uint8) *port {
 	self := &port{
 		left:left,
 		con:con,
+		ext_sendq:make(chan *Frame),
 		sendq:make(chan *Frame),
 		recvq:make(chan *Frame),
 		send_lock:new(sync.Mutex),
@@ -263,8 +265,26 @@ func (self *port) RightId() uint8 {
 }
 
 func (self *port) Send(bs []byte) error {
-	self.send(newFrame(self.left, self.right, FLG_DATA, bs))
+	select {
+	case <- self.ctx.Done():
+		return nil
+	case self.ext_sendq <- newFrame(self.left, self.right, FLG_DATA, bs):
+	}
 	return nil
+}
+
+func (self *port) connectSendPipe() {
+	go func() {
+		for {
+			select {
+			case <- self.ctx.Done():
+				return
+			case f := <- self.ext_sendq:
+				self.send(f)
+			}
+
+		}
+	}()
 }
 
 func (self *port) connectRecvPipe(b_ch chan *Frame) {
@@ -305,7 +325,6 @@ func (self *port) run_sender() {
 			timer.Reset(t_range)
 
 			if err := self.write(f_ping); err != nil {
-				logger.PrintErr("port.run_sender: %s", err)
 				self.close()
 				return
 			}
@@ -456,6 +475,7 @@ func linkup(ctx context.Context, id uint8, con net.Conn, b_ch chan *Frame) (*por
 	}
 
 	port.connectRecvPipe(b_ch)
+	port.connectSendPipe()
 	return port, nil
 }
 
