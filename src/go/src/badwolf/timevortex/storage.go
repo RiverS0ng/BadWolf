@@ -237,8 +237,12 @@ func (self *TimeVortex) walkEvent(c context.Context, b_st []byte, b_et []byte) (
 func (self *TimeVortex) findEvent(c context.Context, b_st []byte, b_et []byte, opt *Options) ([]*Event, error) {
 	eid_ch := make(chan []byte)
 	evts := []*Event{}
+	wg := new(sync.WaitGroup)
 
 	go func() {
+		defer close(eid_ch)
+		defer wg.Wait()
+
 		iter := self.category.NewIterator(&util.Range{Start:b_st, Limit:b_et}, nil)
 
 		for iter.Next() {
@@ -254,7 +258,10 @@ func (self *TimeVortex) findEvent(c context.Context, b_st []byte, b_et []byte, o
 				continue
 			}
 
+			wg.Add(1)
 			go func() {
+				defer wg.Done()
+
 				h := 0
 				for h < len(v) {
 					l := h + 16

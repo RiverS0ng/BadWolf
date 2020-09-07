@@ -116,7 +116,7 @@ func run_recver(wg *sync.WaitGroup, ctx context.Context, rt *router.Router, tv *
 					continue
 				}
 
-				evt, err := tv.AddNewEvent(news.Source, news)
+				evt, err := tv.AddNewEvent(news.Recorder, news)
 				if err != nil {
 					logger.PrintErr("run_recver: failed add event : %s", err)
 					continue
