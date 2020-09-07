@@ -14,11 +14,6 @@ import (
 	"badwolf/timevortex"
 )
 
-func die(s string, msg ...interface{}) {
-	fmt.Fprintf(os.Stderr, s + "\n" , msg...)
-	os.Exit(1)
-}
-
 const (
 	CORE_ROUTER_ID uint8 = 1
 
@@ -64,6 +59,11 @@ func bwget_args() error {
 		return err
 	}
 	return nil
+}
+
+func die(s string, msg ...interface{}) {
+	fmt.Fprintf(os.Stderr, s + "\n" , msg...)
+	os.Exit(1)
 }
 
 func init() {
