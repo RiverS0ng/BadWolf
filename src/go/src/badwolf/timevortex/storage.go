@@ -38,7 +38,7 @@ type TimeVortex struct {
 	cancel context.CancelFunc
 
 	wg     *sync.WaitGroup
-	mtx    *sync.Mutex
+	mtx    *sync.RWMutex
 }
 
 func CreateTimeVortex(path string) error {
@@ -108,7 +108,7 @@ func OpenTimeVortex(bg_ctx context.Context, path string) (*TimeVortex, error) {
 		ctx:ctx,
 		cancel:cancel,
 		wg:new(sync.WaitGroup),
-		mtx:new(sync.Mutex),
+		mtx:new(sync.RWMutex),
 	}
 	return self, nil
 }
@@ -200,8 +200,8 @@ func (self *TimeVortex) updateCategory(tool string, category string, eids [][]by
 }
 
 func (self *TimeVortex) Find(c context.Context, st time.Time, et time.Time, opt *Options) ([]*Event, error) {
-	self.lock()
-	defer self.unlock()
+	self.rlock()
+	defer self.runlock()
 
 	b_st := make([]byte, 8)
 	b_et := make([]byte, 8)
@@ -305,6 +305,14 @@ func (self *TimeVortex) lock() {
 
 func (self *TimeVortex) unlock() {
 	self.mtx.Unlock()
+}
+
+func (self *TimeVortex) rlock() {
+	self.mtx.RLock()
+}
+
+func (self *TimeVortex) runlock() {
+	self.mtx.RUnlock()
 }
 
 type Options struct {
