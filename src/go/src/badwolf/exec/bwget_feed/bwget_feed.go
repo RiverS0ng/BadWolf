@@ -104,7 +104,18 @@ func bwget_feed() error {
 					continue
 				}
 				if err := rt.Send(CORE_ROUTER_ID, n_b); err != nil {
-					return err
+					if err != router.ErrUnconnectPort && err != router.ErrClosedPort {
+						return err
+					}
+
+					rt.Close()
+					rt, err = router.Connect(ctx, RouterId, SockPath)
+					if err != nil {
+						return err
+					}
+					if err := rt.Send(CORE_ROUTER_ID, n_b); err != nil {
+						return err
+					}
 				}
 			}
 		}

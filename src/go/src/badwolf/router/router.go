@@ -28,6 +28,11 @@ const (
 	END_OF_FRAME     string = "\n\n"
 )
 
+var (
+	ErrClosedPort error = fmt.Errorf("closed port.")
+	ErrUnconnectPort error = fmt.Errorf("unconnect port.")
+)
+
 type Router struct {
 	id     uint8
 	ports  map[uint8]*port
@@ -113,7 +118,10 @@ func (self *Router) send(dst uint8, body []byte) error {
 
 	port, ok := self.ports[dst]
 	if !ok {
-		return fmt.Errorf("undefined port table.")
+		return ErrUnconnectPort
+	}
+	if port.IsClosed() {
+		return ErrClosedPort
 	}
 
 	return port.Send(body)
@@ -208,7 +216,28 @@ func (self *Router) append(port *port) error {
 	}
 
 	self.ports[tgt] = port
+	logger.PrintMsg("conected port. %v", tgt)
+	self.run_portAutoRemover(port)
 	return nil
+}
+
+func (self *Router) run_portAutoRemover(port *port) {
+	go func() {
+		tgt := port.RightId()
+
+		select {
+		case <- self.ctx.Done():
+			return
+		case <- port.RecvClosed():
+			logger.PrintMsg("detected port close. this port remove. %v", tgt)
+			func() {
+				self.lock()
+				defer self.unlock()
+
+				delete(self.ports, tgt)
+			}()
+		}
+	}()
 }
 
 func (self *Router) close() error {
@@ -231,6 +260,7 @@ func (self *Router) unlock() {
 
 type port struct {
 	con net.Conn
+	closed chan interface{}
 
 	left  uint8
 	right uint8
@@ -241,17 +271,21 @@ type port struct {
 
 	send_lock *sync.Mutex
 	ctx context.Context
+	cancel context.CancelFunc
 }
 
 func newPort(ctx context.Context, con net.Conn, left uint8) *port {
+	p_ctx, cancel := context.WithCancel(ctx)
 	self := &port{
 		left:left,
 		con:con,
+		closed:make(chan interface{}),
 		ext_sendq:make(chan *Frame),
 		sendq:make(chan *Frame),
 		recvq:make(chan *Frame),
 		send_lock:new(sync.Mutex),
-		ctx:ctx,
+		ctx:p_ctx,
+		cancel:cancel,
 	}
 
 	go self.run_sender()
@@ -267,7 +301,7 @@ func (self *port) RightId() uint8 {
 func (self *port) Send(bs []byte) error {
 	select {
 	case <- self.ctx.Done():
-		return nil
+		return ErrClosedPort
 	case self.ext_sendq <- newFrame(self.left, self.right, FLG_DATA, bs):
 	}
 	return nil
@@ -479,11 +513,35 @@ func linkup(ctx context.Context, id uint8, con net.Conn, b_ch chan *Frame) (*por
 	return port, nil
 }
 
+func (self *port) RecvClosed() chan interface{} {
+	return self.recvClosed()
+}
+
+func (self *port) recvClosed() chan interface{} {
+	return self.closed
+}
+
+func (self *port) IsClosed() bool {
+	select {
+	case <- self.recvClosed():
+		return true
+	default:
+	}
+	return false
+}
+
 func (self *port) Close() error {
 	return self.close()
 }
 
 func (self *port) close() error {
+	if self.IsClosed() {
+		return nil
+	}
+	close(self.closed)
+
+	self.cancel()
+
 	ucon, ok := self.con.(*net.UnixConn)
 	if !ok {
 		return self.con.Close()
