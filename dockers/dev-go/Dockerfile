@@ -1,7 +1,7 @@
 FROM ubuntu:18.04
 MAINTAINER hinoshiba
 
-ENV GOVERSION 1.13.15
+ENV GOVERSION 1.14.9
 
 ENV GOROOT /opt/go
 ENV GOPATH /go/src
