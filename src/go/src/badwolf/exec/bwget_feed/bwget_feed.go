@@ -85,7 +85,11 @@ func bwget_feed() error {
 				if item.Author != nil {
 					source = item.Author.Name
 				}
-				if item.PublishedParsed != nil {
+
+				if item.UpdatedParsed != nil {
+					pubdate = *item.UpdatedParsed
+				}
+				if item.UpdatedParsed == nil && item.PublishedParsed != nil {
 					pubdate = *item.PublishedParsed
 				}
 
