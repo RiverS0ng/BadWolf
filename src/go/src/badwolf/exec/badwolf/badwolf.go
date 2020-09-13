@@ -82,9 +82,9 @@ func signalInterruptHandler(f func()) {
 
 func run_recver(wg *sync.WaitGroup, ctx context.Context, rt *router.Router, tv *timevortex.TimeVortex) error {
 	//ev_ch_n := make(chan *timevortex.Event) //TODO: create noticer
-	ev_ch_a := make(chan *timevortex.Event)
+	news_ch_a := make(chan *timevortex.News)
 
-	if err := run_analyzer(wg, newChildContext(ctx), ev_ch_a); err != nil {
+	if err := run_analyzer(wg, newChildContext(ctx), news_ch_a); err != nil {
 		return err
 	}
 	/* TODO: create noticer
@@ -96,7 +96,7 @@ func run_recver(wg *sync.WaitGroup, ctx context.Context, rt *router.Router, tv *
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer close(ev_ch_a)
+		defer close(news_ch_a)
 		//defer close(ev_ch_n)
 		defer logger.PrintMsg("run_recver: exiting...")
 
@@ -109,25 +109,24 @@ func run_recver(wg *sync.WaitGroup, ctx context.Context, rt *router.Router, tv *
 					return
 				}
 
-				logger.PrintMsg("run_recver: got new event.")
+				logger.PrintMsg("run_recver: got new news.")
 				news, err := timevortex.Bytes2News(f.Body())
 				if err != nil {
 					logger.PrintErr("run_recver: cant convert frame to news : %s", err)
 					continue
 				}
 
-				evt, err := tv.AddNewEvent(news.Recorder, news)
-				if err != nil {
-					logger.PrintErr("run_recver: failed add event : %s", err)
+				if err := tv.AddNews(news); err != nil {
+					logger.PrintErr("run_recver: failed add news : %s", err)
 					continue
 				}
-				logger.PrintMsg("run_recver: recorded new event.")
+				logger.PrintMsg("run_recver: recorded new news.")
 
 				go func() {
 					select {
 					case <- ctx.Done():
 						return
-					case ev_ch_a <- evt:
+					case news_ch_a <- news:
 						return
 					}
 				}()
@@ -136,7 +135,7 @@ func run_recver(wg *sync.WaitGroup, ctx context.Context, rt *router.Router, tv *
 					select {
 					case ctx.Done():
 						return
-					case ev_ch_n <- evt:
+					case ev_ch_n <- news:
 						return
 					}
 				}()
@@ -148,7 +147,7 @@ func run_recver(wg *sync.WaitGroup, ctx context.Context, rt *router.Router, tv *
 	return nil
 }
 
-func run_analyzer(wg *sync.WaitGroup, ctx context.Context, evt_ch chan *timevortex.Event) error {
+func run_analyzer(wg *sync.WaitGroup, ctx context.Context, news_ch chan *timevortex.News) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -157,9 +156,9 @@ func run_analyzer(wg *sync.WaitGroup, ctx context.Context, evt_ch chan *timevort
 			select {
 			case <- ctx.Done():
 				return
-			case _, ok := <- evt_ch: //TODO: create analyzer
+			case _, ok := <- news_ch: //TODO: create analyzer
 				if !ok {
-					logger.PrintMsg("run_analyzer: closed evt_ch")
+					logger.PrintMsg("run_analyzer: closed news_ch")
 					return
 				}
 			}
@@ -169,7 +168,7 @@ func run_analyzer(wg *sync.WaitGroup, ctx context.Context, evt_ch chan *timevort
 }
 
 /*TODO: create noticer
-func run_noticer(wg *sync.WaitGroup, ctx context.Context, evt_ch chan *timevortex.Event) error {
+func run_noticer(wg *sync.WaitGroup, ctx context.Context, news_ch chan *timevortex.Event) error {
 	wg.Add(1)
 	defer wg.Done()
 	return nil
@@ -261,19 +260,19 @@ func GenerateFeed(ctx context.Context, tv *timevortex.TimeVortex,
 		opt = timevortex.NewOptions(tool, category)
 	}
 
-	evts, err := tv.Find(ctx, st, et, opt)
+	news_s, err := tv.Find(ctx, st, et, opt)
 	if err != nil {
 		return nil, err
 	}
 
 	items := []*feeds.Item{}
-	for _, evt := range evts {
+	for _, news := range news_s {
 		item := &feeds.Item{
-			Title: evt.Title(),
-			Link:  &feeds.Link{Href: evt.Link()},
-			Description: evt.Summary(),
-			Author: &feeds.Author{Name: evt.Recorder()},
-			Created: evt.Time(),
+			Title: news.Title,
+			Link:  &feeds.Link{Href: news.Link},
+			Description: news.Summary,
+			Author: &feeds.Author{Name: news.Recorder},
+			Created: news.PubDate,
 		}
 		items = append(items, item)
 	}

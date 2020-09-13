@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestEvent2Byte(t *testing.T) {
+func TestNews2Byte(t *testing.T) {
 	n := testDummyNews()
 	b, err := n.Bytes()
 	if err != nil {

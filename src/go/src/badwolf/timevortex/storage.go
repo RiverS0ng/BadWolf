@@ -11,7 +11,6 @@ import (
 )
 
 import (
-	"github.com/google/uuid"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/util"
@@ -28,6 +27,10 @@ const (
 	SIZE_LIMIT_CATEGORYNAME int = 2040
 	SIZE_MAX_TOOLNAME int = 1024
 	SIZE_LIMIT_TOOLNAME int = 2040
+)
+
+var (
+	ErrAlreadyExist error = fmt.Errorf("the data is already exist.")
 )
 
 type TimeVortex struct {
@@ -124,42 +127,45 @@ func (self *TimeVortex) Close() {
 	self.wg.Wait()
 }
 
-func (self *TimeVortex) AddNewEvent(tool string, news *News) (*Event, error) {
+func (self *TimeVortex) AddNews(news *News) error {
 	self.lock()
 	defer self.unlock()
 
-	eid := generateEvtID()
+	id := news.Id()
 	news_b, err := news.Bytes()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	if err := self.timeline.Put(eid, news_b, nil); err != nil {
-		return nil, err
+	if _, err := self.timeline.Get(id, nil); err == nil {
+		return ErrAlreadyExist
+	}
+	if err := self.timeline.Put(id, news_b, nil); err != nil {
+		return err
 	}
 
-	if err := self.updateCategory(tool, CATEGORY_ORG, [][]byte{eid}); err != nil {
-		return nil, err
+	if err := self.updateCategory(news.Recorder, CATEGORY_ORG, [][]byte{id}); err != nil {
+		return err
 	}
-	return newEvent(eid, news), nil
+	return nil
 }
 
-func (self *TimeVortex) DeleteEvent(eid []byte) error {
+func (self *TimeVortex) DeleteNews(id []byte) error {
 	self.lock()
 	defer self.unlock()
 
-	return self.timeline.Delete(eid, nil)
+	return self.timeline.Delete(id, nil)
 }
 
-func (self *TimeVortex) UpdateCategory(tool string, category string, eids [][]byte) error {
+func (self *TimeVortex) UpdateCategory(tool string, category string, ids [][]byte) error {
 	self.lock()
 	defer self.unlock()
 
-	return self.updateCategory(tool, category, eids)
+	return self.updateCategory(tool, category, ids)
 
 }
 
-func (self *TimeVortex) updateCategory(tool string, category string, eids [][]byte) error {
+func (self *TimeVortex) updateCategory(tool string, category string, ids [][]byte) error {
 	b_tool := []byte(tool)
 	if len(b_tool) > SIZE_MAX_TOOLNAME {
 		return fmt.Errorf("over the tool value size.")
@@ -188,18 +194,18 @@ func (self *TimeVortex) updateCategory(tool string, category string, eids [][]by
 	cid = append(cid, b_tool...)
 	cid = append(cid, t_dummy...)
 
-	b_eids := []byte{}
-	for _, eid := range eids {
-		b_eids = append(b_eids, eid...)
+	b_ids := []byte{}
+	for _, id := range ids {
+		b_ids = append(b_ids, id...)
 	}
 
-	if err := self.category.Put(cid, b_eids, nil); err != nil {
+	if err := self.category.Put(cid, b_ids, nil); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (self *TimeVortex) Find(c context.Context, st time.Time, et time.Time, opt *Options) ([]*Event, error) {
+func (self *TimeVortex) Find(c context.Context, st time.Time, et time.Time, opt *Options) ([]*News, error) {
 	self.rlock()
 	defer self.runlock()
 
@@ -209,38 +215,55 @@ func (self *TimeVortex) Find(c context.Context, st time.Time, et time.Time, opt 
 	binary.BigEndian.PutUint64(b_et, uint64(et.Unix()))
 
 	if opt == nil {
-		return self.walkEvent(c, b_st, b_et)
+		news_desc, err := self.walkNews(c, b_st, b_et)
+		if err != nil {
+			return nil, err
+		}
+		return reverse(news_desc), nil
 	}
-	return self.findEvent(c, b_st, b_et, opt)
+	news_desc, err := self.findNews(c, b_st, b_et, opt)
+	if err != nil {
+		return nil, err
+	}
+	return reverse(news_desc), nil
 }
 
-func (self *TimeVortex) walkEvent(c context.Context, b_st []byte, b_et []byte) ([]*Event, error) {
+func reverse(news_s []*News) []*News {
+	l := len(news_s)
+
+	news_asc := make([]*News, l)
+	for i, news := range news_s {
+		news_asc[(l - 1 - i)] = news
+	}
+	return news_asc
+}
+
+func (self *TimeVortex) walkNews(c context.Context, b_st []byte, b_et []byte) ([]*News, error) {
 	iter := self.timeline.NewIterator(&util.Range{Start:b_st, Limit:b_et}, nil)
 
-	evts := []*Event{}
+	news_s := []*News{}
 	for iter.Next() {
-		eid := iter.Key()
 		b_news := iter.Value()
 
 		news, err := Bytes2News(b_news)
 		if err != nil {
-			return nil, fmt.Errorf("findEvent: parse failed: %s", err)
+			return nil, fmt.Errorf("findNews: parse failed: %s", err)
 		}
-		evts = append(evts, newEvent(eid, news))
+		news_s = append(news_s, news)
 	}
 	if err := iter.Error(); err != nil {
 		return nil, err
 	}
-	return evts, nil
+	return news_s, nil
 }
 
-func (self *TimeVortex) findEvent(c context.Context, b_st []byte, b_et []byte, opt *Options) ([]*Event, error) {
-	eid_ch := make(chan []byte)
-	evts := []*Event{}
+func (self *TimeVortex) findNews(c context.Context, b_st []byte, b_et []byte, opt *Options) ([]*News, error) {
+	id_ch := make(chan []byte)
+	news_s := []*News{}
 	wg := new(sync.WaitGroup)
 
 	go func() {
-		defer close(eid_ch)
+		defer close(id_ch)
 		defer wg.Wait()
 
 		iter := self.category.NewIterator(&util.Range{Start:b_st, Limit:b_et}, nil)
@@ -269,7 +292,7 @@ func (self *TimeVortex) findEvent(c context.Context, b_st []byte, b_et []byte, o
 					select {
 					case <- c.Done():
 						return
-					case eid_ch <- v[h:l]:
+					case id_ch <- v[h:l]:
 					}
 					h = l
 				}
@@ -280,13 +303,13 @@ func (self *TimeVortex) findEvent(c context.Context, b_st []byte, b_et []byte, o
 	for {
 		select {
 		case <-c.Done():
-			return nil, fmt.Errorf("findEvent: canceled")
-		case eid, ok := <-eid_ch:
+			return nil, fmt.Errorf("findNews: canceled")
+		case id, ok := <-id_ch:
 			if !ok {
-				return evts, nil
+				return news_s, nil
 			}
 
-			b_news, err := self.timeline.Get(eid, nil)
+			b_news, err := self.timeline.Get(id, nil)
 			if err != nil {
 				if err != leveldb.ErrNotFound {
 					return nil, err
@@ -296,15 +319,15 @@ func (self *TimeVortex) findEvent(c context.Context, b_st []byte, b_et []byte, o
 
 			news, err := Bytes2News(b_news)
 			if err != nil {
-				return nil, fmt.Errorf("findEvent: parse failed: %s", err)
+				return nil, fmt.Errorf("findNews: parse failed: %s", err)
 			}
-			evts = append(evts, newEvent(eid, news))
+			news_s = append(news_s, news)
 		}
 	}
-	return evts, nil
+	return news_s, nil
 }
 
-//func (self *TimeVortex) NewEventIter() //TODO:future
+//func (self *TimeVortex) NewNewsIter() //TODO:future
 
 func (self *TimeVortex) lock() {
 	self.mtx.Lock()
@@ -355,16 +378,4 @@ func (self *Options) Match(b_category []byte, b_tool []byte) bool {
 	}
 
 	return true
-}
-
-func generateEvtID() []byte {
-	utime := uint64(time.Now().Unix())
-	uuidv2 := uint64(uuid.New().ID())
-	b_utime := make([]byte, 8)
-	b_uuidv2 := make([]byte, 8)
-	binary.BigEndian.PutUint64(b_utime, utime)
-	binary.BigEndian.PutUint64(b_uuidv2, uuidv2)
-
-	evt_id := append(b_utime, b_uuidv2...)
-	return evt_id
 }

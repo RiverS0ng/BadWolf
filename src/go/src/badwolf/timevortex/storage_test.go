@@ -42,7 +42,7 @@ func TestAddData(t *testing.T) {
 	defer tv.Close()
 
 	ns := testDummyNews()
-	if _, err := tv.AddNewEvent(TestToolName, ns); err != nil {
+	if err := tv.AddNews(ns); err != nil {
 		t.Fatal("Failed add news. :", err)
 	}
 }
@@ -58,17 +58,17 @@ func TestLookupAndDeleteData(t *testing.T) {
 	st := time.Now().AddDate(0, 0, -1)
 	et := time.Now().AddDate(0, 0, 1)
 
-	evts, err := tv.Find(task_ctx, st, et, nil)
+	news_s, err := tv.Find(task_ctx, st, et, nil)
 	if err != nil {
-		t.Fatal("Failed event not found. :", err)
+		t.Fatal("Failed news not found. :", err)
 	}
-	if len(evts) < 1 {
-		t.Fatal("Failed event not found. : less than 1")
+	if len(news_s) < 1 {
+		t.Fatal("Failed news not found. : less than 1")
 	}
 
-	for _, evt := range evts {
-		if err := tv.DeleteEvent(evt.Id()); err != nil {
-			t.Fatal("Failed remove event. : ", err)
+	for _, news := range news_s {
+		if err := tv.DeleteNews(news.Id()); err != nil {
+			t.Fatal("Failed remove news. : ", err)
 		}
 	}
 }
@@ -81,13 +81,12 @@ func TestUpdateCategory(t *testing.T) {
 	defer tv.Close()
 
 	ns := testDummyNews()
-	evt, err := tv.AddNewEvent(TestToolName, ns)
-	if err != nil {
+	if err := tv.AddNews(ns); err != nil {
 		t.Fatal("Failed add news. :", err)
 	}
-	eid := evt.Id()
+	id := ns.Id()
 
-	if err := tv.UpdateCategory(TestToolName2, TestCategoryName, [][]byte{eid}); err != nil {
+	if err := tv.UpdateCategory(TestToolName2, TestCategoryName, [][]byte{id}); err != nil {
 		t.Fatal("Failed update category. : ", err)
 	}
 }
