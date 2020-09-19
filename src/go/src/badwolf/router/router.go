@@ -16,11 +16,15 @@ import (
 )
 
 const (
-	BLOADCAST_RID    uint8 = 0
+	NOTARGET_RID     uint8 = 0
+	CORE_RID         uint8 = 1
+	BLOADCAST_RID    uint8 = 255
 
 	FLG_PING         uint8 = 0
 	FLG_BYE          uint8 = 255
-	FLG_SYNC         uint8 = 2
+	FLG_SYN          uint8 = 1
+	FLG_ACK          uint8 = 2
+	FLG_SYNACK       uint8 = 3
 	FLG_DATA         uint8 = 5
 
 	TIMEOUT_LIMIT    int = 4
@@ -36,6 +40,7 @@ var (
 type Router struct {
 	id     uint8
 	ports  map[uint8]*port
+	stock  map[uint8]interface{}
 
 	recv   chan *Frame
 
@@ -46,8 +51,8 @@ type Router struct {
 	wg     *sync.WaitGroup
 }
 
-func NewRouter(bg_ctx context.Context, id uint8, path string) (*Router, error) {
-	r := newRouter(bg_ctx, id)
+func NewRouter(bg_ctx context.Context, path string) (*Router, error) {
+	r := newRouter(bg_ctx, CORE_RID)
 
 	if err := r.CreatePort(path); err != nil {
 		return nil, err
@@ -55,10 +60,10 @@ func NewRouter(bg_ctx context.Context, id uint8, path string) (*Router, error) {
 	return r, nil
 }
 
-func Connect(bg_ctx context.Context, id uint8, path string) (*Router, error) {
-	r := newRouter(bg_ctx, id)
+func Connect(bg_ctx context.Context, path string) (*Router, error) {
+	r := newRouter(bg_ctx, NOTARGET_RID)
 
-	if err := r.ConnectPort(path); err != nil {
+	if err := r.connectPort(path); err != nil {
 		return nil, err
 	}
 	return r, nil
@@ -71,10 +76,18 @@ func newRouter(bg_ctx context.Context, id uint8) *Router {
 	ctx, cancel := context.WithCancel(bg_ctx)
 
 	ports := make(map[uint8]*port)
+	stock := make(map[uint8]interface{})
+	for i := 1; i < 255; i++ {
+		if id == uint8(i) {
+			continue
+		}
+		stock[uint8(i)] = nil
+	}
 
 	return &Router{
 		id:id,
 		ports:ports,
+		stock:stock,
 		recv:make(chan *Frame),
 		ctx:ctx,
 		cancel:cancel,
@@ -90,11 +103,17 @@ func (self *Router) Close() error {
 	return self.close()
 }
 
-func (self *Router) ConnectPort(path string) error {
+func (self *Router) connectPort(path string) error {
 	self.lock()
 	defer self.unlock()
 
-	return self.dial(path)
+	c_ctx, _ := context.WithCancel(self.ctx)
+	port, err := connect(c_ctx, path, self.recv)
+	if err != nil {
+		return err
+	}
+	self.id = port.LeftId()
+	return self.append(port)
 }
 
 func (self *Router) CreatePort(path string) error {
@@ -115,6 +134,17 @@ func (self *Router) send(dst uint8, body []byte) error {
 	if dst == self.id {
 		return fmt.Errorf("can't send to same id.")
 	}
+	if dst == BLOADCAST_RID {
+		for _, port := range self.ports {
+			go func() {
+				if port.IsClosed() {
+					return
+				}
+				port.Send(body)
+			}()
+		}
+		return nil
+	}
 
 	port, ok := self.ports[dst]
 	if !ok {
@@ -123,7 +153,6 @@ func (self *Router) send(dst uint8, body []byte) error {
 	if port.IsClosed() {
 		return ErrClosedPort
 	}
-
 	return port.Send(body)
 }
 
@@ -180,8 +209,14 @@ func (self *Router) listen(path string) error {
 					self.lock()
 					defer self.unlock()
 
-					port, err := linkup(c_ctx, self.id, rcv.sess, self.recv)
+					rid, err := self.requestRightId()
 					if err != nil {
+						logger.PrintErr("Router.listen: %s", err)
+						return
+					}
+					port, err := linkup(c_ctx, self.id, rid, rcv.sess, self.recv)
+					if err != nil {
+						self.releaseRightId(rid)
 						logger.PrintErr("Router.listen: %s", err)
 						return
 					}
@@ -195,13 +230,17 @@ func (self *Router) listen(path string) error {
 	return nil
 }
 
-func (self *Router) dial(path string) error {
-	c_ctx, _ := context.WithCancel(self.ctx)
-	port, err := connect(c_ctx, self.id, path, self.recv)
-	if err != nil {
-		return err
+func (self *Router) requestRightId() (uint8, error) {
+	for id, _ := range self.stock {
+		use_id := id
+		delete(self.stock, id)
+		return use_id, nil
 	}
-	return self.append(port)
+	return 0, fmt.Errorf("not in stock.")
+}
+
+func (self *Router) releaseRightId(id uint8) {
+	self.stock[id] = nil
 }
 
 func (self *Router) append(port *port) error {
@@ -235,6 +274,7 @@ func (self *Router) run_portAutoRemover(port *port) {
 				defer self.unlock()
 
 				delete(self.ports, tgt)
+				self.releaseRightId(tgt)
 			}()
 		}
 	}()
@@ -274,10 +314,9 @@ type port struct {
 	cancel context.CancelFunc
 }
 
-func newPort(ctx context.Context, con net.Conn, left uint8) *port {
+func newPort(ctx context.Context, con net.Conn) *port {
 	p_ctx, cancel := context.WithCancel(ctx)
 	self := &port{
-		left:left,
 		con:con,
 		closed:make(chan interface{}),
 		ext_sendq:make(chan *Frame),
@@ -294,8 +333,16 @@ func newPort(ctx context.Context, con net.Conn, left uint8) *port {
 	return self
 }
 
+func (self *port) SetLeftId(id uint8) {
+	self.left = id
+}
+
 func (self *port) RightId() uint8 {
 	return self.right
+}
+
+func (self *port) LeftId() uint8 {
+	return self.left
 }
 
 func (self *port) Send(bs []byte) error {
@@ -458,52 +505,19 @@ func (self *port) run_recver() {
 	}
 }
 
-func (self *port) getRightId() error {
-	var right_id uint8
-
-	timer := time.NewTimer(time.Second * time.Duration(TIMEOUT_LIMIT))
-	defer timer.Stop()
-
-	select {
-		case <- self.ctx.Done():
-			return fmt.Errorf("canceled.")
-		case <-timer.C:
-			return fmt.Errorf("timeout.")
-		case f := <- self.recv():
-			bs := f.Body()
-			if len(bs) < 1 {
-				return fmt.Errorf("too short return bytes.")
-			}
-			if f.flag != FLG_SYNC {
-				return fmt.Errorf("not expect flag.")
-			}
-			right_id = bs[0]
-	}
-	if self.left == right_id {
-		return fmt.Errorf("can't connect to same id.")
-	}
-
-	self.right = right_id
-	return nil
-}
-
-func connect(ctx context.Context, id uint8, path string, b_ch chan *Frame) (*port, error) {
+func connect(ctx context.Context, path string, b_ch chan *Frame) (*port, error) {
 	con, err := net.Dial("unix", path)
 	if err != nil {
 		return nil, err
 	}
-	return linkup(ctx, id, con, b_ch)
-}
 
-func linkup(ctx context.Context, id uint8, con net.Conn, b_ch chan *Frame) (*port, error) {
-	port := newPort(ctx, con, id)
-
-	go func() {
-		body_from := []byte{byte(id)}
-		port.send(newFrame(id, BLOADCAST_RID, FLG_SYNC, body_from))
-	}()
-
-	if err := port.getRightId(); err != nil {
+	port := newPort(ctx, con)
+	if err := port.recvSyn(); err != nil {
+		port.close()
+		return nil, err
+	}
+	port.sendSynAck()
+	if err := port.recvAck(); err != nil {
 		port.close()
 		return nil, err
 	}
@@ -511,6 +525,101 @@ func linkup(ctx context.Context, id uint8, con net.Conn, b_ch chan *Frame) (*por
 	port.connectRecvPipe(b_ch)
 	port.connectSendPipe()
 	return port, nil
+}
+
+func linkup(ctx context.Context, lid uint8, rid uint8, con net.Conn, b_ch chan *Frame) (*port, error) {
+	port := newPort(ctx, con)
+	port.SetLeftId(lid)
+
+	port.sendSyn(rid)
+	if err := port.recvSynAck(); err != nil {
+		port.close()
+		return nil, err
+	}
+	port.sendAck()
+
+	port.connectRecvPipe(b_ch)
+	port.connectSendPipe()
+	return port, nil
+}
+
+func (self *port) sendSyn(rid uint8) {
+	self.right = rid
+	go func() {
+		body_from := []byte{byte(rid)}
+		self.send(newFrame(NOTARGET_RID, NOTARGET_RID, FLG_SYN, body_from))
+	}()
+}
+
+func (self *port) sendSynAck() {
+	go func() {
+		body_from := []byte{byte(self.left)}
+		self.send(newFrame(NOTARGET_RID, NOTARGET_RID, FLG_SYNACK, body_from))
+	}()
+}
+
+func (self *port) sendAck() {
+	go func() {
+		body_from := []byte{byte(self.left)}
+		self.send(newFrame(NOTARGET_RID, NOTARGET_RID, FLG_ACK, body_from))
+	}()
+}
+
+func (self *port) recvSyn() error {
+	left_id, err := self.handshakeRecver(FLG_SYN)
+	if err != nil {
+		return fmt.Errorf("recvSyn: %v", err)
+	}
+
+	self.left = left_id
+	return nil
+}
+
+func (self *port) recvSynAck() error {
+	right_id, err := self.handshakeRecver(FLG_SYNACK)
+	if err != nil {
+		return fmt.Errorf("recvSynAck: %v", err)
+	}
+	if self.right != right_id {
+		return fmt.Errorf("recvSynAck: can't connect to same id.")
+	}
+	return nil
+}
+
+func (self *port) recvAck() error {
+	right_id, err := self.handshakeRecver(FLG_ACK)
+	if err != nil {
+		return fmt.Errorf("recvSyn: %v", err)
+	}
+	if self.left == right_id {
+		return fmt.Errorf("recvAck: can't connect to same id.")
+	}
+
+	self.right = right_id
+	return nil
+}
+
+func (self *port) handshakeRecver(flg uint8) (uint8, error) {
+	timer := time.NewTimer(time.Second * time.Duration(TIMEOUT_LIMIT))
+	defer timer.Stop()
+
+	var router_id uint8
+	select {
+		case <- self.ctx.Done():
+			return 0, fmt.Errorf("handshakeRecver: canceled.")
+		case <-timer.C:
+			return 0, fmt.Errorf("handshakeRecver: timeout.")
+		case f := <- self.recv():
+			bs := f.Body()
+			if len(bs) < 1 {
+				return 0, fmt.Errorf("handshakeRecver: too short return bytes.")
+			}
+			if f.flag != flg {
+				return 0, fmt.Errorf("handshakeRecver: not expect flag.")
+			}
+			router_id = bs[0]
+	}
+	return router_id, nil
 }
 
 func (self *port) RecvClosed() chan interface{} {

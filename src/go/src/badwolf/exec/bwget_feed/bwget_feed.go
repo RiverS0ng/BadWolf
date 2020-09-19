@@ -21,11 +21,7 @@ import (
 )
 
 const (
-	CORE_ROUTER_ID uint8 = 1
-
-	ROUTER_ID uint8 = 129
-
-	USAGE string =  "Usage : bwget_feed [ -rid <router id> ] [ -s <sleep time(second)> ] <socket path> <recorder name> <feed url>"
+	USAGE string =  "Usage : bwget_feed [ -s <sleep time(second)> ] <socket path> <recorder name> <feed url>"
 )
 
 var (
@@ -33,7 +29,6 @@ var (
 	SockPath string
 	FeedUrl   string
 
-	RouterId  uint8
 	SleepTime int
 )
 
@@ -43,13 +38,12 @@ func bwget_feed() error {
 	logger.PrintMsg("Recorder : %s", Recorder)
 	logger.PrintMsg("FeedUrl : %s", FeedUrl)
 	logger.PrintMsg("SockPath : %s", SockPath)
-	logger.PrintMsg("RouterId : %v", RouterId)
 	ctx, cancel := context.WithCancel(context.Background())
 	signalInterruptHandler(cancel)
 	defer cancel()
 
 	logger.PrintMsg("router connecting... : %s", SockPath)
-	rt, err := router.Connect(ctx, RouterId, SockPath)
+	rt, err := router.Connect(ctx, SockPath)
 	if err != nil {
 		return err
 	}
@@ -107,17 +101,17 @@ func bwget_feed() error {
 					logger.PrintErr("failed conver to news: %s", err)
 					continue
 				}
-				if err := rt.Send(CORE_ROUTER_ID, n_b); err != nil {
+				if err := rt.Send(router.BLOADCAST_RID, n_b); err != nil {
 					if err != router.ErrUnconnectPort && err != router.ErrClosedPort {
 						return err
 					}
 
 					rt.Close()
-					rt, err = router.Connect(ctx, RouterId, SockPath)
+					rt, err = router.Connect(ctx, SockPath)
 					if err != nil {
 						return err
 					}
-					if err := rt.Send(CORE_ROUTER_ID, n_b); err != nil {
+					if err := rt.Send(router.BLOADCAST_RID, n_b); err != nil {
 						return err
 					}
 				}
@@ -142,19 +136,13 @@ func die(s string, msg ...interface{}) {
 }
 
 func init() {
-	var rid        int
 	var sleep_time int
-	flag.IntVar(&rid, "rid", int(ROUTER_ID), "router id.")
-	flag.IntVar(&sleep_time, "s", 60, "sleep time(second).")
+	flag.IntVar(&sleep_time, "s", 900, "sleep time(second).")
 	flag.Parse()
 
 	if flag.NArg() < 3 {
 		die(USAGE)
 	}
-	if 0 > rid || rid > 255 {
-		die("router id out of range from 0 to 255\n" + USAGE)
-	}
-	RouterId = uint8(rid)
 	if 0 > sleep_time {
 		die("sleep time too small than zero.\n" + USAGE)
 	}

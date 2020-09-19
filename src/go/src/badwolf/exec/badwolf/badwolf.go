@@ -22,10 +22,6 @@ import (
 	"badwolf/timevortex"
 )
 
-const (
-	ROUTER_ID uint8 = 1
-)
-
 var (
 	SocketPath     string
 	TimeVortexPath string
@@ -49,7 +45,7 @@ func badwolf() error {
 	defer logger.PrintMsg("Closing Storage : %s", TimeVortexPath)
 
 	logger.PrintMsg("Start the router, connect to socket : %s", SocketPath)
-	rt, err := router.NewRouter(newChildContext(ctx), ROUTER_ID, SocketPath)
+	rt, err := router.NewRouter(newChildContext(ctx), SocketPath)
 	if err != nil {
 		return err
 	}

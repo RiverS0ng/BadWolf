@@ -15,12 +15,9 @@ import (
 )
 
 const (
-	CORE_ROUTER_ID uint8 = 1
-
 	RECORDER string = "bwget_args"
-	ROUTER_ID uint8 = 254
 
-	USAGE string =  "Usage : bwget_args [-r <recorder name> ] [-rid <router id> ] <socket path> <Title> <Link url> <Summary> <Publish date(unixtime)> <Source url>"
+	USAGE string =  "Usage : bwget_args [-r <recorder name> ] <socket path> <Title> <Link url> <Summary> <Publish date(unixtime)> <Source url>"
 )
 
 var (
@@ -32,7 +29,6 @@ var (
 	Recorder string
 
 	SockPath string
-	RouterId uint8
 )
 
 func bwget_args() error {
@@ -49,13 +45,13 @@ func bwget_args() error {
 		return err
 	}
 
-	rt, err := router.Connect(nil, RouterId, SockPath)
+	rt, err := router.Connect(nil, SockPath)
 	if err != nil {
 		return err
 	}
 	defer rt.Close()
 
-	if err := rt.Send(CORE_ROUTER_ID, n_b); err != nil {
+	if err := rt.Send(router.BLOADCAST_RID, n_b); err != nil {
 		return err
 	}
 	return nil
@@ -68,9 +64,7 @@ func die(s string, msg ...interface{}) {
 
 func init() {
 	var recorder string
-	var rid      int
 	flag.StringVar(&recorder, "r", RECORDER, "name of recorder.")
-	flag.IntVar(&rid, "rid", int(ROUTER_ID), "router id.")
 	flag.Parse()
 
 	if flag.NArg() < 6 {
@@ -80,10 +74,6 @@ func init() {
 		die("empty the name of recorder.\n" + USAGE)
 	}
 	Recorder = recorder
-	if 0 > rid || rid > 255 {
-		die("router id out of range from 0 to 255\n" + USAGE)
-	}
-	RouterId = uint8(rid)
 
 	if flag.Arg(0) == "" {
 		die("empty the path of socket.\n" + USAGE)
