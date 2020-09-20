@@ -12,6 +12,7 @@ import (
 import (
 	"badwolf/router"
 	"badwolf/timevortex"
+	"badwolf/packet"
 )
 
 const (
@@ -51,7 +52,8 @@ func bwget_args() error {
 	}
 	defer rt.Close()
 
-	if err := rt.Send(router.BLOADCAST_RID, n_b); err != nil {
+	p_b := packet.CreateBytes(packet.F_S_NEW_NEWS, n_b)
+	if err := rt.Send(router.BLOADCAST_RID, p_b); err != nil {
 		return err
 	}
 	return nil

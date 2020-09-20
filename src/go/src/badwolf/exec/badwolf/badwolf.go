@@ -20,6 +20,7 @@ import (
 	"badwolf/logger"
 	"badwolf/router"
 	"badwolf/timevortex"
+	"badwolf/packet"
 )
 
 var (
@@ -76,24 +77,42 @@ func signalInterruptHandler(f func()) {
 	}()
 }
 
+func run_newsRecorder(wg *sync.WaitGroup, ctx context.Context, rt *router.Router, tv *timevortex.TimeVortex, from uint8, body []byte) {
+	defer wg.Done()
+
+	news, err := timevortex.Bytes2News(body)
+	if err != nil {
+		logger.PrintErr("run_newsRecorder: cant convert packet to news : %s", err)
+		return
+	}
+
+	if err := tv.AddNews(news); err != nil {
+		if err != timevortex.ErrAlreadyExist {
+			logger.PrintErr("run_newsRecorder: failed add news : %s", err)
+			return
+		}
+
+		logger.PrintErr("run_newsRecorder: tried already exist data.")
+		p_b := packet.CreateBytes(packet.F_R_NEW_NEWS, news.Id())
+		if err := rt.Send(from, p_b); err != nil {
+			logger.PrintErr("run_newsRecorder: failed reply : %s", err)
+			return
+		}
+		return
+	}
+	logger.PrintMsg("run_newsRecorder: recorded new news.")
+
+	p_b := packet.CreateBytes(packet.F_R_NEW_NEWS, news.Id())
+	if err := rt.Send(from, p_b); err != nil {
+		logger.PrintErr("run_newsRecorder: failed reply : %s", err)
+		return
+	}
+}
+
 func run_recver(wg *sync.WaitGroup, ctx context.Context, rt *router.Router, tv *timevortex.TimeVortex) error {
-	//ev_ch_n := make(chan *timevortex.Event) //TODO: create noticer
-	news_ch_a := make(chan *timevortex.News)
-
-	if err := run_analyzer(wg, newChildContext(ctx), news_ch_a); err != nil {
-		return err
-	}
-	/* TODO: create noticer
-	if err := run_noticer(wg, newChildContext(ctx), ev_ch_n); err != nil {
-		return err
-	}
-	*/
-
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer close(news_ch_a)
-		//defer close(ev_ch_n)
 		defer logger.PrintMsg("run_recver: exiting...")
 
 		for {
@@ -105,71 +124,26 @@ func run_recver(wg *sync.WaitGroup, ctx context.Context, rt *router.Router, tv *
 					return
 				}
 
-				logger.PrintMsg("run_recver: got new news.")
-				news, err := timevortex.Bytes2News(f.Body())
+				p, err := packet.Bytes2Packet(f.Body())
 				if err != nil {
-					logger.PrintErr("run_recver: cant convert frame to news : %s", err)
+					logger.PrintErr("run_recver: cant convert frame body to packet : %s", err)
 					continue
 				}
 
-				if err := tv.AddNews(news); err != nil {
-					logger.PrintErr("run_recver: failed add news : %s", err)
-					continue
+				from := f.SrcId()
+				switch p.Flg() {
+					case packet.F_S_NEW_NEWS:
+						wg.Add(1)
+						go run_newsRecorder(wg, ctx, rt, tv, from, p.Body())
+					default:
+						logger.PrintErr("run_recver: unkown operation.")
 				}
-				logger.PrintMsg("run_recver: recorded new news.")
-
-				go func() {
-					select {
-					case <- ctx.Done():
-						return
-					case news_ch_a <- news:
-						return
-					}
-				}()
-				/*//TODO: create noticer
-				go func() {
-					select {
-					case ctx.Done():
-						return
-					case ev_ch_n <- news:
-						return
-					}
-				}()
-				*/
 			}
 		}
 	}()
 
 	return nil
 }
-
-func run_analyzer(wg *sync.WaitGroup, ctx context.Context, news_ch chan *timevortex.News) error {
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		for {
-			select {
-			case <- ctx.Done():
-				return
-			case _, ok := <- news_ch: //TODO: create analyzer
-				if !ok {
-					logger.PrintMsg("run_analyzer: closed news_ch")
-					return
-				}
-			}
-		}
-	}()
-	return nil
-}
-
-/*TODO: create noticer
-func run_noticer(wg *sync.WaitGroup, ctx context.Context, news_ch chan *timevortex.Event) error {
-	wg.Add(1)
-	defer wg.Done()
-	return nil
-}
-*/
 
 func run_publisher(wg *sync.WaitGroup, ctx context.Context, tv *timevortex.TimeVortex) error {
 	sv := &http.Server{

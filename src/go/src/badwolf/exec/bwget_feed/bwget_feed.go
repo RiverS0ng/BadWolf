@@ -18,6 +18,7 @@ import (
 	"badwolf/router"
 	"badwolf/logger"
 	"badwolf/timevortex"
+	"badwolf/packet"
 )
 
 const (
@@ -53,6 +54,32 @@ func bwget_feed() error {
 	posted := make(map[string]interface{})
 	tc := time.NewTicker(time.Second * time.Duration(SleepTime))
 	fp := gofeed.NewParser()
+
+	go func() {
+		for {
+			select {
+			case <- ctx.Done():
+				return
+			case f, ok := <- rt.Recv():
+				if !ok {
+					return
+				}
+
+				p, err := packet.Bytes2Packet(f.Body())
+				if err != nil {
+					logger.PrintErr("cant convert frame body to packet : %s", err)
+					continue
+				}
+				if p.Flg() != packet.F_R_NEW_NEWS {
+					logger.PrintErr("unkown operation")
+					continue
+				}
+
+				posted[string(p.Body())] = nil
+			}
+		}
+	}()
+
 	for {
 		select {
 		case <- ctx.Done():
@@ -68,25 +95,17 @@ func bwget_feed() error {
 
 			now := time.Now()
 			for _, item := range feed.Items {
-				_, ok := posted[item.GUID + item.Updated]
-				if ok {
-					continue
-				}
-				posted[item.GUID + item.Updated] = nil
-
 				var source string
 				var pubdate time.Time = now
 				if item.Author != nil {
 					source = item.Author.Name
 				}
-
 				if item.UpdatedParsed != nil {
 					pubdate = *item.UpdatedParsed
 				}
 				if item.UpdatedParsed == nil && item.PublishedParsed != nil {
 					pubdate = *item.PublishedParsed
 				}
-
 				news := &timevortex.News{
 					Title: item.Title,
 					Link: item.Link,
@@ -96,12 +115,18 @@ func bwget_feed() error {
 					Recorder: Recorder,
 				}
 
+				_, ok := posted[string(news.Id())]
+				if ok {
+					continue
+				}
+
 				n_b, err := news.Bytes()
 				if err != nil {
 					logger.PrintErr("failed conver to news: %s", err)
 					continue
 				}
-				if err := rt.Send(router.BLOADCAST_RID, n_b); err != nil {
+				p_b := packet.CreateBytes(packet.F_S_NEW_NEWS, n_b)
+				if err := rt.Send(router.BLOADCAST_RID, p_b); err != nil {
 					if err != router.ErrUnconnectPort && err != router.ErrClosedPort {
 						return err
 					}
