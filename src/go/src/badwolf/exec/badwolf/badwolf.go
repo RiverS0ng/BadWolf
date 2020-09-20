@@ -4,16 +4,18 @@ import (
 	"os"
 	"os/signal"
 	"fmt"
+	"net/http"
 	"flag"
 	"path/filepath"
 	"sync"
 	"time"
 	"context"
-	"net/http"
+	"strings"
 )
 
 import (
 	"github.com/gorilla/feeds"
+	"github.com/BurntSushi/toml"
 )
 
 import (
@@ -24,9 +26,7 @@ import (
 )
 
 var (
-	SocketPath     string
-	TimeVortexPath string
-	ListenPort     string
+	Conf *Config
 )
 
 func badwolf() error {
@@ -36,17 +36,17 @@ func badwolf() error {
 	defer cancel()
 	signalInterruptHandler(cancel)
 
-	logger.PrintMsg("Open Storage : %s", TimeVortexPath)
-	tv, err := timevortex.OpenTimeVortex(newChildContext(ctx), TimeVortexPath)
+	logger.PrintMsg("Open Storage : %s", Conf.Server.Db)
+	tv, err := timevortex.OpenTimeVortex(newChildContext(ctx), Conf.Server.Db)
 	if err != nil {
 		return err
 	}
 	defer logger.PrintMsg("Closed Storage.")
 	defer tv.Close()
-	defer logger.PrintMsg("Closing Storage : %s", TimeVortexPath)
+	defer logger.PrintMsg("Closing Storage : %s", Conf.Server.Db)
 
-	logger.PrintMsg("Start the router, connect to socket : %s", SocketPath)
-	rt, err := router.NewRouter(newChildContext(ctx), SocketPath)
+	logger.PrintMsg("Start the router, connect to socket : %s", Conf.Server.Socket)
+	rt, err := router.NewRouter(newChildContext(ctx), Conf.Server.Socket)
 	if err != nil {
 		return err
 	}
@@ -102,10 +102,54 @@ func run_newsRecorder(wg *sync.WaitGroup, ctx context.Context, rt *router.Router
 	}
 	logger.PrintMsg("run_newsRecorder: recorded new news.")
 
+	wg.Add(1)
+	go test_analyzer(wg, tv, news)
+
 	p_b := packet.CreateBytes(packet.F_R_NEW_NEWS, news.Id())
 	if err := rt.Send(from, p_b); err != nil {
 		logger.PrintErr("run_newsRecorder: failed reply : %s", err)
 		return
+	}
+}
+
+func test_analyzer(wg *sync.WaitGroup, tv *timevortex.TimeVortex, news *timevortex.News) { //TODO: test funciton
+	defer wg.Done()
+	defer logger.PrintMsg("[TEST FUNCTION] test_analyzer closed")
+
+	check_val := news.Title + news.Summary + news.Link
+
+	for cname, f := range Conf.Filters {
+		logger.PrintMsg("[TEST FUNCTION] called: %s", cname)
+		logger.PrintMsg("[TEST FUNCTION] called: %s", f)
+
+		func() {
+			if f.Or != nil {
+				for _, val := range f.Or {
+					if strings.Contains(check_val, val) {
+						if err := tv.UpdateCategory("TEST_EMBEDED_ANALYZER", cname, [][]byte{news.Id()}); err != nil {
+							logger.PrintErr("test_analyzer: failed update category: %v", err)
+							return
+						}
+						logger.PrintMsg("[TEST FUNCTION] Added category: %s", cname)
+						return
+					}
+				}
+			}
+
+			if f.And != nil {
+				for _, val := range f.And {
+					if !strings.Contains(check_val, val) {
+						return
+					}
+				}
+				if err := tv.UpdateCategory("TEST_EMBEDED_ANALYZER", cname, [][]byte{news.Id()}); err != nil {
+					logger.PrintErr("test_analyzer: failed update category: %v", err)
+					return
+				}
+				logger.PrintMsg("[TEST FUNCTION] Added category: %s", cname)
+				return
+			}
+		}()
 	}
 }
 
@@ -147,7 +191,7 @@ func run_recver(wg *sync.WaitGroup, ctx context.Context, rt *router.Router, tv *
 
 func run_publisher(wg *sync.WaitGroup, ctx context.Context, tv *timevortex.TimeVortex) error {
 	sv := &http.Server{
-		Addr: "127.0.0.1:" + ListenPort,
+		Addr: "127.0.0.1:" + fmt.Sprintf("%v", Conf.Server.Port),
 	}
 	http.HandleFunc("/", func (w http.ResponseWriter, r *http.Request) {
 		logger.PrintMsg("[HTTP Request] %s, %s, %s", r.RemoteAddr, r.Method, r.URL)
@@ -248,10 +292,11 @@ func GenerateFeed(ctx context.Context, tv *timevortex.TimeVortex,
 	}
 
 	body := &feeds.Feed{
-		Title:       "rss feed",
-		Link:        &feeds.Link{Href: "http://example.com"},
-		Description: "rss feed description",
-		Author:      &feeds.Author{Name: "john smith", Email: "donotreply@example.com"},
+		Title:       Conf.Feed.Title,
+		Link:        &feeds.Link{Href: Conf.Feed.Link},
+		Description: Conf.Feed.Description,
+		Author:      &feeds.Author{Name: Conf.Feed.AuthorName,
+								Email: Conf.Feed.AuthorEmal},
 		Created:     time.Now(),
 		Items:       items,
 	}
@@ -268,28 +313,57 @@ func newChildContext(ctx context.Context) context.Context {
 	return c_ctx
 }
 
+type Config struct {
+	Server  *Server
+	Feed    *Feed
+	Filters map[string]*Filter //TODO:Test
+}
+
+type Server struct {
+	Db     string
+	Port   int
+	Socket string
+}
+
+type Feed struct {
+	Title       string
+	Link        string
+	Description string
+	AuthorName  string `toml:"author_name"`
+	AuthorEmal  string `toml:"author_email"`
+}
+
+type Filter struct {
+	And []string
+	Or  []string
+}
+
+func loadConfig(path string) (*Config, error) {
+	var conf Config
+
+	fpath := filepath.Clean(path)
+	if _, err := toml.DecodeFile(fpath, &conf); err != nil {
+		return nil, err
+	}
+	return &conf, nil
+}
+
 func init() {
-	var s_path string
-	var t_path string
-	var listen_port int
-	flag.StringVar(&s_path, "s", "", ".sock file path.")
-	flag.StringVar(&t_path, "t", "", "TimeVortex path.")
-	flag.IntVar(&listen_port, "p", 3000, "listen port.")
+	var c_path string
+	flag.StringVar(&c_path, "c", "", "config path.")
 	flag.Parse()
 
-	if s_path == "" {
-		die("empty socket path.\nUsage : badwolf -s <socket file path> -t <TimeVortex path>")
+	if c_path == "" {
+		die("empty config path.\nUsage : badwolf -c <config path>")
 	}
-	if t_path == "" {
-		die("empty TimeVortex path.\nUsage : badwolf -s <socket file path> -t <TimeVortex path>")
+	cnf, err := loadConfig(c_path)
+	if err != nil {
+		die("can't load config : %s", err)
 	}
-	if 0 >= listen_port || listen_port > 65535 {
+	if 0 >= cnf.Server.Port || cnf.Server.Port > 65535 {
 		die("port number out of range.")
 	}
-
-	SocketPath = filepath.Clean(s_path)
-	TimeVortexPath = filepath.Clean(t_path)
-	ListenPort = fmt.Sprintf("%v", listen_port)
+	Conf = cnf
 }
 
 func main() {

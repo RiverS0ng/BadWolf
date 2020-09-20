@@ -1,0 +1,16 @@
+[server]
+db = "./hoge.tv"
+port = 3000
+socket = "./test.sock"
+
+[feed]
+title = "badwolf"
+link = "http://www.hinoshiba.com"
+description = "my rss"
+author_name = "hinoshiba"
+author_email = "example@hinoshiba.com"
+
+[filters]
+  [filters.GithubRelease]
+  and = ["releases", "github.com"]
+  or = ["mytesttagornews"]
