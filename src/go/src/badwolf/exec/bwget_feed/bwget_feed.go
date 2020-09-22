@@ -56,14 +56,15 @@ func bwget_feed() error {
 		case <- ctx.Done():
 			return nil
 		case <- tc.C:
-			logger.PrintMsg("get feed")
+			logger.PrintMsg("strat the feed download and parse.")
 			feed, err := fp.ParseURLWithContext(FeedUrl, ctx)
 			if err != nil {
-				logger.PrintErr("failed parse feed : %s", err)
+				logger.PrintErr("Failed : %s", err)
 				continue
 			}
-			logger.PrintMsg("got feed item : %v", len(feed.Items))
+			logger.PrintMsg("got feed (%v) items.", len(feed.Items))
 
+			logger.PrintMsg("post to bwlord.")
 			now := time.Now()
 			for _, item := range feed.Items {
 				var source string
@@ -87,10 +88,13 @@ func bwget_feed() error {
 				}
 
 				if err := bw_g.Post(news); err != nil {
-					logger.PrintErr("failed post : %s", err)
+					if err != badwolf.ErrAlreadyExistRecord {
+						logger.PrintErr("Failed : %s", err)
+					}
 					continue
 				}
 			}
+			logger.PrintMsg("post done.")
 		}
 	}
 	return nil

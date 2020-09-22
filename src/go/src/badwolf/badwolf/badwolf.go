@@ -21,13 +21,17 @@ import (
 )
 
 const (
-	TYPE_OWNER     uint8 = 1
+	TYPE_TIMELORD  uint8 = 1
 	TYPE_ANLYZER   uint8 = 2
 	TYPE_GETTER    uint8 = 3
 	TYPE_PUBLISHER uint8 = 4
 )
 
-type Owner struct {
+var (
+	ErrAlreadyExistRecord error = fmt.Errorf("already exist record")
+)
+
+type Timelord struct {
 	rt    *router.Router
 	tv    *timevortex.TimeVortex
 	r_tbl *router.RouteTable
@@ -40,7 +44,10 @@ type Owner struct {
 	test_analyz_chan chan *timevortex.News
 }
 
-func NewOwner(b_ctx context.Context, tv_path string, sock_path string) (*Owner, error) {
+func NewTimelord(b_ctx context.Context, tv_path string, sock_path string) (*Timelord, error) {
+	logger.PrintMsg("[init] initilazing timelord...")
+	defer logger.PrintMsg("[init] done initialize.")
+
 	if b_ctx == nil {
 		b_ctx = context.Background()
 	}
@@ -64,7 +71,7 @@ func NewOwner(b_ctx context.Context, tv_path string, sock_path string) (*Owner, 
 	}
 	logger.PrintMsg("[init] created the interface.")
 
-	self := &Owner{
+	self := &Timelord{
 		rt: rt,
 		tv: tv,
 		r_tbl: router.NewRouteTable(),
@@ -79,31 +86,44 @@ func NewOwner(b_ctx context.Context, tv_path string, sock_path string) (*Owner, 
 	return self, nil
 }
 
-func (self *Owner) Run() {
+func (self *Timelord) Run() {
+	logger.PrintMsg("run the timelord.")
 	self.recver()
 }
 
-func (self *Owner) TestRunPublisher(port int, f_conf *FeedConf) {
+func (self *Timelord) TestRunPublisher(port int, f_conf *FeedConf) {
+	logger.PrintMsg("[TEST_FUNCTION] call the function of publisher.")
 	self.run_publisher(port, f_conf)
 }
 
-func (self *Owner) TestRunAnalyzer(filter map[string]*Filter) {
+func (self *Timelord) TestRunAnalyzer(filter map[string]*Filter) {
+	logger.PrintMsg("[TEST_FUNCTION] call the function of analyzer.")
+	defer logger.PrintMsg("[Analyzer] start the analyzer.")
+
 	self.wg.Add(1)
 	go func() {
 		defer self.wg.Done()
 
-		select {
-		case <- self.ctx.Done():
-			return
-		case news := <- self.test_analyz_chan:
-			go self.test_analyzer(filter, news)
+		for {
+			select {
+			case <- self.ctx.Done():
+				return
+			case news, ok := <- self.test_analyz_chan:
+				if !ok {
+					return
+				}
+				go self.test_analyzer(filter, news)
+			}
 		}
 	}()
 }
 
-func (self *Owner) Close() {
+func (self *Timelord) Close() {
 	self.lock()
 	defer self.unlock()
+
+	logger.PrintMsg("[Closer] closing timelord...")
+	defer logger.PrintMsg("[Closer] closed timelord.")
 
 	defer self.wg.Wait()
 	self.cancel()
@@ -112,7 +132,9 @@ func (self *Owner) Close() {
 	self.tv.Close()
 }
 
-func (self *Owner) run_publisher(port int, f_conf *FeedConf) {
+func (self *Timelord) run_publisher(port int, f_conf *FeedConf) {
+	defer logger.PrintMsg("[Publisher] start the publsher. 127.0.0.1:%v", port)
+
 	sv := &http.Server{
 		Addr: "127.0.0.1:" + fmt.Sprintf("%v", port),
 	}
@@ -127,13 +149,13 @@ func (self *Owner) run_publisher(port int, f_conf *FeedConf) {
 
 			f, err := GenerateFeed(self.ctx, self.tv, start, end, category, tool, f_conf)
 			if err != nil {
-				logger.PrintErr("[HTTP Request] GenerateFeed : %s", err)
+				logger.PrintErr("Timelord.run_publisher: GenerateFeed : %s", err)
 				http.Error(w, "Failed: generate feed body.", http.StatusInternalServerError)
 				return
 			}
 			rss, err := f.ToRss()
 			if err != nil {
-				logger.PrintErr("[HTTP Request] GenerateFeed : %s", err)
+				logger.PrintErr("Timelord.run_publisher: GenerateFeed : %s", err)
 				http.Error(w, "Failed: generate feed body.", http.StatusInternalServerError)
 				return
 			}
@@ -155,9 +177,9 @@ func (self *Owner) run_publisher(port int, f_conf *FeedConf) {
 
 			if err := sv.ListenAndServe(); err != nil {
 				if err != http.ErrServerClosed {
-					logger.PrintErr("run_publisher: httpListenAndServe: %s", err)
+					logger.PrintErr("Timelord.run_publisher: httpListenAndServe: %s", err)
 				}
-				logger.PrintMsg("run_publisher: httpListenAndServe: ServerClose")
+				logger.PrintMsg("Timelord.run_publisher: httpListenAndServe: ServerClose")
 				return
 			}
 		}()
@@ -165,28 +187,30 @@ func (self *Owner) run_publisher(port int, f_conf *FeedConf) {
 		go func() {
 			<- self.ctx.Done()
 			if err := sv.Shutdown(self.ctx); err != nil {
-				logger.PrintErr("run_publisher: httpListenAndServe: %s", err)
+				logger.PrintErr("Timelord.run_publisher: httpListenAndServe: %s", err)
 				return
 			}
 		}()
 	}()
 }
 
-func (self *Owner) post2Analyzer(news *timevortex.News) {
+func (self *Timelord) post2Analyzer(news *timevortex.News) {
 	self.wg.Add(1)
 	go func() {
 		defer self.wg.Done()
 
-		select {
-		case <- self.ctx.Done():
-			return
-		case self.test_analyz_chan <- news:
-			return
+		for {
+			select {
+			case <- self.ctx.Done():
+				return
+			case self.test_analyz_chan <- news:
+				return
+			}
 		}
 	}()
 }
 
-func (self *Owner) test_analyzer(filter map[string]*Filter, news *timevortex.News) {
+func (self *Timelord) test_analyzer(filter map[string]*Filter, news *timevortex.News) {
 	check_val := news.Title + news.Summary + news.Link
 
 	for cname, f := range filter {
@@ -194,11 +218,11 @@ func (self *Owner) test_analyzer(filter map[string]*Filter, news *timevortex.New
 			if f.Or != nil {
 				for _, val := range f.Or {
 					if strings.Contains(check_val, val) {
-						if err := self.tv.UpdateCategory("TEST_EMBEDED_ANALYZER", cname, [][]byte{news.Id()}); err != nil {
-							logger.PrintErr("test_analyzer: failed update category: %v", err)
+						if err := self.tv.UpdateCategory("TEST_EMBEDED_Analyzer", cname, [][]byte{news.Id()}); err != nil {
+							logger.PrintErr("Timelord.test_analyzer: failed update category: %v", err)
 							return
 						}
-						logger.PrintMsg("[TEST FUNCTION] Added category: %s", cname)
+						logger.PrintMsg("[Analyzer] Added category: %s", cname)
 						return
 					}
 				}
@@ -210,18 +234,18 @@ func (self *Owner) test_analyzer(filter map[string]*Filter, news *timevortex.New
 						return
 					}
 				}
-				if err := self.tv.UpdateCategory("TEST_EMBEDED_ANALYZER", cname, [][]byte{news.Id()}); err != nil {
-					logger.PrintErr("test_analyzer: failed update category: %v", err)
+				if err := self.tv.UpdateCategory("TEST_EMBEDED_Analyzer", cname, [][]byte{news.Id()}); err != nil {
+					logger.PrintErr("Timelord.test_analyzer: failed update category: %v", err)
 					return
 				}
-				logger.PrintMsg("[TEST FUNCTION] Added category: %s", cname)
+				logger.PrintMsg("[Analyzer] Added category: %s", cname)
 				return
 			}
 		}()
 	}
 }
 
-func (self *Owner) recver() {
+func (self *Timelord) recver() {
 	for {
 		select {
 		case <- self.ctx.Done():
@@ -253,14 +277,14 @@ func (self *Owner) recver() {
 				continue
 				*/
 			default:
-				logger.PrintErr("run_recver: unkown operation.")
+				logger.PrintErr("Timeload.run_recver: unkown operation.")
 				continue
 			}
 		}
 	}
 }
 
-func (self *Owner) run_recordNews(from uint8, body []byte) {
+func (self *Timelord) run_recordNews(from uint8, body []byte) {
 	self.wg.Add(1)
 	go func() {
 		defer self.wg.Done()
@@ -272,54 +296,46 @@ func (self *Owner) run_recordNews(from uint8, body []byte) {
 
 		if err := self.tv.AddNews(news); err != nil {
 			if err != timevortex.ErrAlreadyExist {
-				logger.PrintErr("run_newsRecorder: failed add news : %s", err)
+				logger.PrintErr("Timeload.run_recordNews: Failed news adding. : %s", err)
 				return
 			}
 
-			logger.PrintErr("run_newsRecorder: tried already exist data.")
+			logger.PrintErr("Timeload.run_recordNews: tried already exist data.")
 		}
 
+		logger.PrintMsg("[Recorder] got news. recorded to timevortex.")
 		self.post2Analyzer(news)
 		p_b := CreateBytesPacket(flg_R_NEWS, news.Id())
 		if err := self.rt.Send(from, p_b); err != nil {
-			logger.PrintErr("run_newsRecorder: failed reply : %s", err)
+			logger.PrintErr("Timeload.run_recordNews: Failed message reply : %s", err)
 			return
 		}
 	}()
 }
 
-func (self *Getter) notice_type() {
-	body := CreateBytesPacket(flg_SYSTEM_TYPE, []byte{TYPE_GETTER})
-
-	if err := self.rt.Send(router.BLOADCAST_RID, body); err != nil {
-		logger.PrintErr("run_recordType: failed send my type to from")
-		return
-	}
-}
-
-func (self *Owner) run_recordRoute(from uint8, body []byte) {
+func (self *Timelord) run_recordRoute(from uint8, body []byte) {
 	self.wg.Add(1)
 	go func() {
 		defer self.wg.Done()
 
 		if len(body) < 1 {
-			logger.PrintErr("run_recordType: data size too short.")
+			logger.PrintErr("Timeload.run_recordRoute: data size too short.")
 			return
 		}
 		self.r_tbl.Add(uint8(body[0]), from)
-		body := CreateBytesPacket(flg_SYSTEM_TYPE, []byte{TYPE_OWNER})
+		body := CreateBytesPacket(flg_SYSTEM_TYPE, []byte{TYPE_TIMELORD})
 		if err := self.rt.Send(from, body); err != nil {
-			logger.PrintErr("run_recordType: failed send my type to from")
+			logger.PrintErr("Timeload.run_recordRoute: failed send my type to from")
 			return
 		}
 	}()
 }
 
-func (self *Owner) lock() {
+func (self *Timelord) lock() {
 	self.mtx.Lock()
 }
 
-func (self *Owner) unlock() {
+func (self *Timelord) unlock() {
 	self.mtx.Unlock()
 }
 
@@ -337,16 +353,21 @@ type Getter struct {
 }
 
 func NewGetter(b_ctx context.Context, sock_path string) (*Getter, error) {
+	logger.PrintMsg("[init] initilazing timelord...")
+	defer logger.PrintMsg("[init] done initialize.")
+
 	if b_ctx == nil {
 		b_ctx = context.Background()
 	}
 	ctx, cancel := context.WithCancel(b_ctx)
 
+	logger.PrintMsg("[init] connect the interface of router to %s", sock_path)
 	sock_cpath := filepath.Clean(sock_path)
 	rt, err := router.Connect(newChildContext(ctx), sock_cpath)
 	if err != nil {
 		return nil, err
 	}
+	logger.PrintMsg("[init] connected the interface")
 
 	self := &Getter{
 		rt: rt,
@@ -364,6 +385,9 @@ func NewGetter(b_ctx context.Context, sock_path string) (*Getter, error) {
 }
 
 func (self *Getter) Close() {
+	logger.PrintMsg("[Closer] closing timelord...")
+	defer logger.PrintMsg("[Closer] closed timelord.")
+
 	defer self.wg.Wait()
 	self.cancel()
 
@@ -400,7 +424,7 @@ func (self *Getter) run_recver() {
 					self.posted[string(p.Body())] = nil
 					continue
 				default:
-					logger.PrintErr("run_recver: unkown operation.")
+					logger.PrintErr("Getter.run_recver: unkown operation.")
 					continue
 				}
 			}
@@ -414,11 +438,20 @@ func (self *Getter) run_recordRoute(from uint8, body []byte) {
 		defer self.wg.Done()
 
 		if len(body) < 1 {
-			logger.PrintErr("run_recordRoute: data size too short.")
+			logger.PrintErr("Getter.run_recordRoute: data size too short.")
 			return
 		}
 		self.r_tbl.Add(uint8(body[0]), from)
 	}()
+}
+
+func (self *Getter) notice_type() {
+	body := CreateBytesPacket(flg_SYSTEM_TYPE, []byte{TYPE_GETTER})
+
+	if err := self.rt.Send(router.BLOADCAST_RID, body); err != nil {
+		logger.PrintErr("Getter.notice_type: failed send my type to from")
+		return
+	}
 }
 
 func (self *Getter) Post(news *timevortex.News) error {
@@ -427,18 +460,18 @@ func (self *Getter) Post(news *timevortex.News) error {
 
 	_, ok := self.posted[string(news.Id())]
 	if ok {
-		return fmt.Errorf("already record")
+		return ErrAlreadyExistRecord
 	}
 
 	n_b, err := news.Bytes()
 	if err != nil {
-		return fmt.Errorf("failed conver to news: %s", err)
+		return fmt.Errorf("Getter.Post: failed conver to news: %s", err)
 	}
 	p_b := CreateBytesPacket(flg_S_NEWS, n_b)
 
-	dsts, err := self.r_tbl.Find(TYPE_OWNER)
+	dsts, err := self.r_tbl.Find(TYPE_TIMELORD)
 	if err != nil {
-		return fmt.Errorf("failed find target: %s", err)
+		return fmt.Errorf("Getter.Post: failed find target: %s", err)
 	}
 	for _, dst := range dsts {
 		if err := self.rt.Send(dst, p_b); err != nil {
@@ -453,7 +486,7 @@ func (self *Getter) Post(news *timevortex.News) error {
 			}
 			self.notice_type()
 			if err := self.rt.Send(dst, n_b); err != nil {
-				return err
+				return fmt.Errorf("Getter.Post: Can't send a data to badwolf lord: %s", err)
 			}
 		}
 	}

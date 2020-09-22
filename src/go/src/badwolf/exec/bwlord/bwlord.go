@@ -21,18 +21,18 @@ var (
 	Conf *Config
 )
 
-func bw_own() error {
-	logger.PrintMsg("starting badwolf....")
-	defer logger.PrintMsg("Exit badwolf")
+func bwlord() error {
+	logger.PrintMsg("starting badwolf_lord....")
+	defer logger.PrintMsg("Exit badwolf_lord")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	signalInterruptHandler(cancel)
 
-	bw_o, err := badwolf.NewOwner(ctx, Conf.Server.Db, Conf.Server.Socket)
+	bw_tl, err := badwolf.NewTimelord(ctx, Conf.Server.Db, Conf.Server.Socket)
 	if err != nil {
 		return err
 	}
-	defer bw_o.Close()
+	defer bw_tl.Close()
 
 	f_conf := &badwolf.FeedConf{
 		Title: Conf.Feed.Title,
@@ -41,10 +41,10 @@ func bw_own() error {
 		AuthorName: Conf.Feed.AuthorName,
 		AuthorEmal: Conf.Feed.AuthorEmail,
 	}
-	bw_o.TestRunPublisher(Conf.Server.Port, f_conf)
-	bw_o.TestRunAnalyzer(Conf.Filters)
+	bw_tl.TestRunPublisher(Conf.Server.Port, f_conf)
+	bw_tl.TestRunAnalyzer(Conf.Filters)
 
-	bw_o.Run()
+	bw_tl.Run()
 	return nil
 }
 
@@ -98,7 +98,7 @@ func init() {
 	flag.Parse()
 
 	if c_path == "" {
-		die("empty config path.\nUsage : badwolf -c <config path>")
+		die("empty config path.\nUsage : bwlord -c <config path>")
 	}
 	cnf, err := loadConfig(c_path)
 	if err != nil {
@@ -111,7 +111,7 @@ func init() {
 }
 
 func main() {
-	if err := bw_own(); err != nil {
+	if err := bwlord(); err != nil {
 		die("%s", err)
 	}
 }

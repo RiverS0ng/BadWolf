@@ -66,6 +66,7 @@ func Connect(bg_ctx context.Context, path string) (*Router, error) {
 	if err := r.connectPort(path); err != nil {
 		return nil, err
 	}
+	logger.PrintMsg("Connected. my id is (%v)", r.id)
 	return r, nil
 }
 
@@ -245,17 +246,17 @@ func (self *Router) releaseRightId(id uint8) {
 
 func (self *Router) append(port *port) error {
 	if self.ports == nil {
-		return fmt.Errorf("undefined port list")
+		return fmt.Errorf("Router.append: undefined port list")
 	}
 
 	tgt := port.RightId()
 	_, ok := self.ports[tgt]
 	if ok {
-		return fmt.Errorf("already exsit id")
+		return fmt.Errorf("Router.append: already exsit id")
 	}
 
 	self.ports[tgt] = port
-	logger.PrintMsg("conected port. %v", tgt)
+	logger.PrintMsg("Connected new client : %v", tgt)
 	self.run_portAutoRemover(port)
 	return nil
 }
@@ -268,7 +269,7 @@ func (self *Router) run_portAutoRemover(port *port) {
 		case <- self.ctx.Done():
 			return
 		case <- port.RecvClosed():
-			logger.PrintMsg("detected port close. this port remove. %v", tgt)
+			logger.PrintMsg("Detect the client(id:%v) closed. removing the client port.", tgt)
 			func() {
 				self.lock()
 				defer self.unlock()
