@@ -505,7 +505,7 @@ func newChildContext(ctx context.Context) context.Context {
 
 func GenerateFeed(ctx context.Context, tv *timevortex.TimeVortex,
 	start string, end string, category string, tool string, f_conf *FeedConf) (*feeds.Feed, error) {
-	layout := "20060102"
+	layout := "2006-01-02"
 
 	if start == "" {
 		start = time.Now().AddDate(0, 0, -14).Format(layout)

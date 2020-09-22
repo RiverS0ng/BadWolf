@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>feed selecter</title>
+		<meta charset="UTF-8">
+		<script type="text/javascript">
+<!--
+function submit_form() {
+	document.feedform.action="http://localhost:3000/";
+	document.feedform.method="get";
+	document.feedform.submit();
+}
+-->
+		</script>
+		<style type="text/css">
+<!--
+form{
+  background-color: #eaeaea;
+  padding:30px 50px;
+}
+
+form dl dt{
+  width: 165px;
+  padding:10px 0;
+  float:left;
+  clear:both;
+}
+
+form dl dd{
+  padding:10px 0;
+}
+
+footer {
+  font-size: 11px;
+}
+
+.submit_link {
+  display: block;
+  cursor: pointer;
+
+  width: 210px;
+  background: #FCD997;
+  color: #332C1F;
+  padding: 16px 40px;
+  border-radius: 30px;
+  font-size: 27px;
+}
+
+.feedicon {
+  width: 22px;
+  height: 22px;
+  display: inline-block;
+  position: relative;
+  background-color: #f49f0f;
+  border: 6px solid #f49f0f;
+  border-radius: 6px;
+}
+.f1, .f2, .f3 {
+  position: absolute
+}
+.f2, .f3 {
+  border-top: 5px solid #fff;
+  border-right: 5px solid #fff;
+}
+.f1 {
+  background-color: #fff;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+  bottom: 0;
+  left: 0;
+}
+.f2 {
+  width: 9px;
+  height: 9px;
+  border-radius: 0 13px 0 0;
+  bottom: 0;
+}
+.f3 {
+  width: 17px;
+  height: 17px;
+  border-radius: 0 22px 0 0;
+}
+-->
+		</style>
+	</head>
+	<body>
+		<h1>feed selecter</h1>
+		<form name="feedform">
+			<dl>
+				<dt>start</dt>
+				<dd><input type="date" name="start" value=""></dd>
+				<dt>end</dt>
+				<dd><input type="date" name="end" value=""></dd>
+				<dt>category</dt>
+				<dd><input type="text" name="category" value="" placeholder="category1 category2 category3"/></dt>
+				<dt>tool</dt>
+				<dd><input type="text" name="tool" value="" placeholder="tool1 tool2 tool3"/></dt>
+				<input hidden type="submit">
+			</dl>
+			<div class="submit_link" onclick="submit_form();">
+				<div class="feedicon">
+					<div class="f1"></div>
+					<div class="f2"></div>
+					<div class="f3"></div>
+				</div>
+				rss subscribe
+			</div>
+		</form>
+		<footer>
+			<a href="https://github.com/RiverS0ng/BadWolf">Powered by badwolf</a>
+		</footer>
+	</body>
+</html>
