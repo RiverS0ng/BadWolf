@@ -346,33 +346,51 @@ func (self *TimeVortex) runlock() {
 }
 
 type Options struct {
-	tool     string
-	category string
+	tools      []string
+	categories []string
 }
 
-func NewOptions(tool string, category string) *Options {
-	return &Options{tool:tool, category:category}
+func NewOptions(tools []string, categories []string) *Options {
+	if tools == nil {
+		tools = []string{}
+	}
+	if categories == nil {
+		categories = []string{}
+	}
+	return &Options{tools:tools, categories:categories}
 }
 
 func (self *Options) Match(b_category []byte, b_tool []byte) bool {
-	if self.category != "" {
-		b_c := []byte(self.category)
-		c_trunc := SIZE_LIMIT_CATEGORYNAME - len(b_c)
-		c_dummy := make([]byte, c_trunc)
-		b_c = append(b_c, c_dummy...)
+	if 0 < len(self.categories) {
+		var match bool = false
+		for _, f_category := range self.categories {
+			b_c := []byte(f_category)
+			c_trunc := SIZE_LIMIT_CATEGORYNAME - len(b_c)
+			c_dummy := make([]byte, c_trunc)
+			b_c = append(b_c, c_dummy...)
 
-		if string(b_c) != string(b_category) {
+			if string(b_c) == string(b_category) {
+				match = true
+			}
+		}
+		if !match {
 			return false
 		}
 	}
 
-	if self.tool != "" {
-		b_t := []byte(self.tool)
-		t_trunc := SIZE_LIMIT_TOOLNAME - len(b_t)
-		t_dummy := make([]byte, t_trunc)
-		b_t = append(b_t, t_dummy...)
+	if 0 < len(self.tools) {
+		var match bool = false
+		for _, f_tool := range self.tools {
+			b_t := []byte(f_tool)
+			t_trunc := SIZE_LIMIT_TOOLNAME - len(b_t)
+			t_dummy := make([]byte, t_trunc)
+			b_t = append(b_t, t_dummy...)
 
-		if string(b_t) != string(b_tool) {
+			if string(b_t) == string(b_tool) {
+				return false
+			}
+		}
+		if !match {
 			return false
 		}
 	}

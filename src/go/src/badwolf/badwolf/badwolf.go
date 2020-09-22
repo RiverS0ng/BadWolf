@@ -25,6 +25,8 @@ const (
 	TYPE_ANLYZER   uint8 = 2
 	TYPE_GETTER    uint8 = 3
 	TYPE_PUBLISHER uint8 = 4
+
+	HTTPGET_OPT_ORSTR string = " "
 )
 
 var (
@@ -519,9 +521,19 @@ func GenerateFeed(ctx context.Context, tv *timevortex.TimeVortex,
 	if err != nil {
 		return nil, err
 	}
+
 	var opt *timevortex.Options
 	if tool != "" || category != "" {
-		opt = timevortex.NewOptions(tool, category)
+		var tools []string
+		var categories []string
+
+		if tool != "" {
+			tools = strings.SplitN(tool, HTTPGET_OPT_ORSTR, 255)
+		}
+		if category != "" {
+			categories = strings.SplitN(category, HTTPGET_OPT_ORSTR, 255)
+		}
+		opt = timevortex.NewOptions(tools, categories)
 	}
 
 	news_s, err := tv.Find(ctx, st, et, opt)
