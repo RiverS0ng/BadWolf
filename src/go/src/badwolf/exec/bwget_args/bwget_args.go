@@ -10,9 +10,8 @@ import (
 )
 
 import (
-	"badwolf/router"
+	"badwolf/badwolf"
 	"badwolf/timevortex"
-	"badwolf/packet"
 )
 
 const (
@@ -41,19 +40,14 @@ func bwget_args() error {
 		Source: Source,
 		Recorder: Recorder,
 	}
-	n_b, err := news.Bytes()
+
+	bw_g, err := badwolf.NewGetter(nil, SockPath)
 	if err != nil {
 		return err
 	}
+	defer bw_g.Close()
 
-	rt, err := router.Connect(nil, SockPath)
-	if err != nil {
-		return err
-	}
-	defer rt.Close()
-
-	p_b := packet.CreateBytes(packet.F_S_NEW_NEWS, n_b)
-	if err := rt.Send(router.BLOADCAST_RID, p_b); err != nil {
+	if err := bw_g.Post(news); err != nil {
 		return err
 	}
 	return nil

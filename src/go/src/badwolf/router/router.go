@@ -701,3 +701,52 @@ func (self *Frame) Body() []byte {
 	copy(dup_body, self.body)
 	return dup_body
 }
+
+type RouteTable struct {
+	route map[uint8]map[uint8]interface{}
+	mtx   *sync.Mutex
+}
+
+func NewRouteTable() *RouteTable {
+	return &RouteTable{
+		route: make(map[uint8]map[uint8]interface{}),
+		mtx: new(sync.Mutex),
+	}
+}
+
+func (self *RouteTable) Add(type_id uint8, node_id uint8) {
+	self.mtx.Lock()
+	defer self.mtx.Unlock()
+
+	t_map, ok := self.route[type_id]
+	if !ok {
+		t_map = make(map[uint8]interface{})
+	}
+	t_map[node_id] = nil
+	self.route[type_id] = t_map
+}
+
+func (self *RouteTable) Remove(node_id uint8) {
+	self.mtx.Lock()
+	defer self.mtx.Unlock()
+
+	for _, t_map := range self.route {
+		delete(t_map, node_id)
+	}
+}
+
+func (self *RouteTable) Find(type_id uint8) ([]uint8, error) {
+	self.mtx.Lock()
+	defer self.mtx.Unlock()
+
+	t_map, ok := self.route[type_id]
+	if !ok {
+		return nil, fmt.Errorf("undefined route")
+	}
+
+	route := make([]uint8, 0, len(t_map))
+	for node_id, _ := range t_map {
+		route = append(route, node_id)
+	}
+	return route, nil
+}

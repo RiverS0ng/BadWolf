@@ -1,28 +1,26 @@
-package packet
+package badwolf
 
 import (
 	"fmt"
 )
 
 const (
-	F_S_NEW_NEWS  uint8 = 1
-	F_R_NEW_NEWS  uint8 = 129
-//	F_S_ANLYZ     uint8 = 2
-//	F_R_ANLYZ     uint8 = 130
-//	F_S_SEARCH    uint8 = 3
-//	F_R_SEARCH    uint8 = 131
-//	F_S_REANLYZ   uint8 = 4
-//	F_R_REANLYZ   uint8 = 132
+	flg_SYSTEM_TYPE uint8 = 129
+	flg_S_NEWS      uint8 = 1
+	flg_R_NEWS      uint8 = 65
+	flg_S_ANLYZ     uint8 = 2
+	flg_R_ANLYZ     uint8 = 66
+	flg_S_SEARCH    uint8 = 3
+	flg_R_SEARCH    uint8 = 67
 )
 
 type Packet struct {
 	flg  uint8
 	//session_id
 	body []byte
-
 }
 
-func CreateBytes(flg uint8, body []byte) []byte {
+func CreateBytesPacket(flg uint8, body []byte) []byte {
 	packet := []byte{flg}
 	packet = append(packet, body...)
 	return packet

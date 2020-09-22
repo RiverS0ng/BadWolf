@@ -15,10 +15,9 @@ import (
 )
 
 import (
-	"badwolf/router"
+	"badwolf/badwolf"
 	"badwolf/logger"
 	"badwolf/timevortex"
-	"badwolf/packet"
 )
 
 const (
@@ -43,42 +42,14 @@ func bwget_feed() error {
 	signalInterruptHandler(cancel)
 	defer cancel()
 
-	logger.PrintMsg("router connecting... : %s", SockPath)
-	rt, err := router.Connect(ctx, SockPath)
+	bw_g, err := badwolf.NewGetter(ctx, SockPath)
 	if err != nil {
 		return err
 	}
-	defer rt.Close()
-	logger.PrintMsg("router connected")
+	defer bw_g.Close()
 
-	posted := make(map[string]interface{})
 	tc := time.NewTicker(time.Second * time.Duration(SleepTime))
 	fp := gofeed.NewParser()
-
-	go func() {
-		for {
-			select {
-			case <- ctx.Done():
-				return
-			case f, ok := <- rt.Recv():
-				if !ok {
-					return
-				}
-
-				p, err := packet.Bytes2Packet(f.Body())
-				if err != nil {
-					logger.PrintErr("cant convert frame body to packet : %s", err)
-					continue
-				}
-				if p.Flg() != packet.F_R_NEW_NEWS {
-					logger.PrintErr("unkown operation")
-					continue
-				}
-
-				posted[string(p.Body())] = nil
-			}
-		}
-	}()
 
 	for {
 		select {
@@ -115,30 +86,9 @@ func bwget_feed() error {
 					Recorder: Recorder,
 				}
 
-				_, ok := posted[string(news.Id())]
-				if ok {
+				if err := bw_g.Post(news); err != nil {
+					logger.PrintErr("failed post : %s", err)
 					continue
-				}
-
-				n_b, err := news.Bytes()
-				if err != nil {
-					logger.PrintErr("failed conver to news: %s", err)
-					continue
-				}
-				p_b := packet.CreateBytes(packet.F_S_NEW_NEWS, n_b)
-				if err := rt.Send(router.BLOADCAST_RID, p_b); err != nil {
-					if err != router.ErrUnconnectPort && err != router.ErrClosedPort {
-						return err
-					}
-
-					rt.Close()
-					rt, err = router.Connect(ctx, SockPath)
-					if err != nil {
-						return err
-					}
-					if err := rt.Send(router.BLOADCAST_RID, n_b); err != nil {
-						return err
-					}
 				}
 			}
 		}
