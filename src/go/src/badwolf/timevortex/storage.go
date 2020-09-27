@@ -4,6 +4,7 @@ import (
 	"os"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 	"context"
@@ -203,27 +204,24 @@ func (self *TimeVortex) Find(c context.Context, st time.Time, et time.Time, opt 
 	binary.BigEndian.PutUint64(b_et, uint64(et.Unix()))
 
 	if opt == nil {
-		news_desc, err := self.walkNews(c, b_st, b_et)
+		news_asc, err := self.walkNews(c, b_st, b_et)
 		if err != nil {
 			return nil, err
 		}
-		return reverse(news_desc), nil
+		return sort_desc(news_asc), nil
 	}
-	news_desc, err := self.findNews(c, b_st, b_et, opt)
+	news_rand, err := self.findNews(c, b_st, b_et, opt)
 	if err != nil {
 		return nil, err
 	}
-	return reverse(news_desc), nil
+	return sort_desc(news_rand), nil
 }
 
-func reverse(news_s []*News) []*News {
-	l := len(news_s)
-
-	news_asc := make([]*News, l)
-	for i, news := range news_s {
-		news_asc[(l - 1 - i)] = news
-	}
-	return news_asc
+func sort_desc(news_s []*News) []*News {
+	sort.SliceStable(news_s, func(i, j int) bool {
+		return !(news_s[j].PubDate.After(news_s[i].PubDate))
+	})
+	return news_s
 }
 
 func (self *TimeVortex) walkNews(c context.Context, b_st []byte, b_et []byte) ([]*News, error) {
