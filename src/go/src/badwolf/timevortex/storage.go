@@ -387,7 +387,7 @@ func (self *Options) Match(b_category []byte, b_tool []byte) bool {
 			b_t = append(b_t, t_dummy...)
 
 			if string(b_t) == string(b_tool) {
-				return false
+				match = true
 			}
 		}
 		if !match {
