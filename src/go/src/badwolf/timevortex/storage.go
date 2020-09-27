@@ -144,7 +144,7 @@ func (self *TimeVortex) AddNews(news *News) error {
 		return err
 	}
 
-	if err := self.updateCategory(news.Recorder, CATEGORY_ORG, [][]byte{id}); err != nil {
+	if err := self.updateCategory(id, news.Recorder, CATEGORY_ORG); err != nil {
 		return err
 	}
 	return nil
@@ -157,15 +157,14 @@ func (self *TimeVortex) DeleteNews(id []byte) error {
 	return self.timeline.Delete(id, nil)
 }
 
-func (self *TimeVortex) UpdateCategory(tool string, category string, ids [][]byte) error {
+func (self *TimeVortex) UpdateCategory(id []byte, tool string, category string) error {
 	self.lock()
 	defer self.unlock()
 
-	return self.updateCategory(tool, category, ids)
-
+	return self.updateCategory(id, tool, category)
 }
 
-func (self *TimeVortex) updateCategory(tool string, category string, ids [][]byte) error {
+func (self *TimeVortex) updateCategory(id []byte, tool string, category string) error {
 	b_tool := []byte(tool)
 	if len(b_tool) > SIZE_MAX_TOOLNAME {
 		return fmt.Errorf("over the tool value size.")
@@ -176,13 +175,7 @@ func (self *TimeVortex) updateCategory(tool string, category string, ids [][]byt
 	}
 
 	cid := make([]byte, 0, 4096)
-	utime := uint64(time.Now().Unix())
-	b_utime := make([]byte, 8)
-	binary.BigEndian.PutUint64(b_utime, utime)
-	cid = append(cid, b_utime...)
-
-	flg := make([]byte, 8)
-	cid = append(cid, flg...)
+	cid = append(cid, id...)
 
 	c_trunc := SIZE_LIMIT_CATEGORYNAME - len(b_category)
 	c_dummy := make([]byte, c_trunc)
@@ -194,12 +187,7 @@ func (self *TimeVortex) updateCategory(tool string, category string, ids [][]byt
 	cid = append(cid, b_tool...)
 	cid = append(cid, t_dummy...)
 
-	b_ids := []byte{}
-	for _, id := range ids {
-		b_ids = append(b_ids, id...)
-	}
-
-	if err := self.category.Put(cid, b_ids, nil); err != nil {
+	if err := self.category.Put(cid, nil, nil); err != nil {
 		return err
 	}
 	return nil
@@ -247,7 +235,7 @@ func (self *TimeVortex) walkNews(c context.Context, b_st []byte, b_et []byte) ([
 
 		news, err := Bytes2News(b_news)
 		if err != nil {
-			return nil, fmt.Errorf("findNews: parse failed: %s", err)
+			return nil, fmt.Errorf("walkNews: parse failed: %s", err)
 		}
 		news_s = append(news_s, news)
 	}
@@ -258,72 +246,50 @@ func (self *TimeVortex) walkNews(c context.Context, b_st []byte, b_et []byte) ([
 }
 
 func (self *TimeVortex) findNews(c context.Context, b_st []byte, b_et []byte, opt *Options) ([]*News, error) {
-	id_ch := make(chan []byte)
 	news_s := []*News{}
-	wg := new(sync.WaitGroup)
 
-	go func() {
-		defer close(id_ch)
-		defer wg.Wait()
+	iter := self.category.NewIterator(&util.Range{Start:b_st, Limit:b_et}, nil)
 
-		iter := self.category.NewIterator(&util.Range{Start:b_st, Limit:b_et}, nil)
+	frs := make(map[string][]bool)
+	for iter.Next() {
+		k := iter.Key()
 
-		for iter.Next() {
-			k := iter.Key()
-			v := iter.Value()
+		limit_c := 16 + SIZE_LIMIT_CATEGORYNAME
+		limit_t := limit_c + SIZE_LIMIT_TOOLNAME
+		b_cat := k[16:limit_c]
+		b_tool := k[limit_c:limit_t]
 
-			limit_c := 16 + SIZE_LIMIT_CATEGORYNAME
-			limit_t := limit_c + SIZE_LIMIT_TOOLNAME
-			b_cat := k[16:limit_c]
-			b_tname := k[limit_c:limit_t]
-
-			if !opt.Match(b_cat, b_tname) {
-				continue
-			}
-
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-
-				h := 0
-				for h < len(v) {
-					l := h + 16
-
-					select {
-					case <- c.Done():
-						return
-					case id_ch <- v[h:l]:
-					}
-					h = l
-				}
-			}()
+		s_id := string(k[0:16])
+		fr, ok := frs[s_id]
+		if !ok {
+			fr = []bool{false, false}
 		}
-	}()
 
-	for {
-		select {
-		case <-c.Done():
-			return nil, fmt.Errorf("findNews: canceled")
-		case id, ok := <-id_ch:
-			if !ok {
-				return news_s, nil
-			}
-
-			b_news, err := self.timeline.Get(id, nil)
-			if err != nil {
-				if err != leveldb.ErrNotFound {
-					return nil, err
-				}
-				continue
-			}
-
-			news, err := Bytes2News(b_news)
-			if err != nil {
-				return nil, fmt.Errorf("findNews: parse failed: %s", err)
-			}
-			news_s = append(news_s, news)
-		}
+		fr[0] = fr[0] || opt.CheckCategory(b_cat)
+		fr[1] = fr[1] || opt.CheckTool(b_tool)
+		frs[s_id] = fr
 	}
+
+	for id, fr := range frs {
+		if !(fr[0] && fr[1]) {
+			continue
+		}
+
+		b_news, err := self.timeline.Get([]byte(id), nil)
+		if err != nil {
+			if err != leveldb.ErrNotFound {
+				return nil, fmt.Errorf("findNews: can't got value: %s", err)
+			}
+			continue
+		}
+
+		news, err := Bytes2News(b_news)
+		if err != nil {
+			return nil, fmt.Errorf("findNews: parse failed: %s", err)
+		}
+		news_s = append(news_s, news)
+	}
+
 	return news_s, nil
 }
 
@@ -360,40 +326,38 @@ func NewOptions(tools []string, categories []string) *Options {
 	return &Options{tools:tools, categories:categories}
 }
 
-func (self *Options) Match(b_category []byte, b_tool []byte) bool {
-	if 0 < len(self.categories) {
-		var match bool = false
-		for _, f_category := range self.categories {
-			b_c := []byte(f_category)
-			c_trunc := SIZE_LIMIT_CATEGORYNAME - len(b_c)
-			c_dummy := make([]byte, c_trunc)
-			b_c = append(b_c, c_dummy...)
-
-			if string(b_c) == string(b_category) {
-				match = true
-			}
-		}
-		if !match {
-			return false
-		}
+func (self *Options) CheckCategory(c []byte) bool {
+	if len(self.categories) < 1 {
+		return true
 	}
 
-	if 0 < len(self.tools) {
-		var match bool = false
-		for _, f_tool := range self.tools {
-			b_t := []byte(f_tool)
-			t_trunc := SIZE_LIMIT_TOOLNAME - len(b_t)
-			t_dummy := make([]byte, t_trunc)
-			b_t = append(b_t, t_dummy...)
+	for _, f_category := range self.categories {
+		b_c := []byte(f_category)
+		c_trunc := SIZE_LIMIT_CATEGORYNAME - len(b_c)
+		c_dummy := make([]byte, c_trunc)
+		b_c = append(b_c, c_dummy...)
 
-			if string(b_t) == string(b_tool) {
-				match = true
-			}
-		}
-		if !match {
-			return false
+		if string(b_c) == string(c) {
+			return true
 		}
 	}
+	return false
+}
 
-	return true
+func (self *Options) CheckTool(t []byte) bool {
+	if len(self.tools) < 1 {
+		return true
+	}
+
+	for _, f_tool := range self.tools {
+		b_t := []byte(f_tool)
+		t_trunc := SIZE_LIMIT_TOOLNAME - len(b_t)
+		t_dummy := make([]byte, t_trunc)
+		b_t = append(b_t, t_dummy...)
+
+		if string(b_t) == string(t) {
+			return true
+		}
+	}
+	return false
 }

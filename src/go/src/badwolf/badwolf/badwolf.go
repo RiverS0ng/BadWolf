@@ -220,7 +220,7 @@ func (self *Timelord) test_analyzer(filter map[string]*Filter, news *timevortex.
 			if f.Or != nil {
 				for _, val := range f.Or {
 					if strings.Contains(check_val, val) {
-						if err := self.tv.UpdateCategory("TEST_EMBEDED_Analyzer", cname, [][]byte{news.Id()}); err != nil {
+						if err := self.tv.UpdateCategory(news.Id(), "TEST_EMBEDED_Analyzer", cname); err != nil {
 							logger.PrintErr("Timelord.test_analyzer: failed update category: %v", err)
 							return
 						}
@@ -236,7 +236,7 @@ func (self *Timelord) test_analyzer(filter map[string]*Filter, news *timevortex.
 						return
 					}
 				}
-				if err := self.tv.UpdateCategory("TEST_EMBEDED_Analyzer", cname, [][]byte{news.Id()}); err != nil {
+				if err := self.tv.UpdateCategory(news.Id(), "TEST_EMBEDED_Analyzer", cname); err != nil {
 					logger.PrintErr("Timelord.test_analyzer: failed update category: %v", err)
 					return
 				}
@@ -303,6 +303,12 @@ func (self *Timelord) run_recordNews(from uint8, body []byte) {
 			}
 
 			logger.PrintErr("Timeload.run_recordNews: tried already exist data.")
+			p_b := CreateBytesPacket(flg_R_NEWS, news.Id())
+			if err := self.rt.Send(from, p_b); err != nil {
+				logger.PrintErr("Timeload.run_recordNews: Failed message reply : %s", err)
+				return
+			}
+			return
 		}
 
 		logger.PrintMsg("[Recorder] got news. recorded to timevortex.")

@@ -86,7 +86,7 @@ func TestUpdateCategory(t *testing.T) {
 	}
 	id := ns.Id()
 
-	if err := tv.UpdateCategory(TestToolName2, TestCategoryName, [][]byte{id}); err != nil {
+	if err := tv.UpdateCategory(id, TestToolName2, TestCategoryName); err != nil {
 		t.Fatal("Failed update category. : ", err)
 	}
 }

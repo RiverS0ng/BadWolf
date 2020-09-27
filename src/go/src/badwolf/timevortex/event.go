@@ -1,6 +1,7 @@
 package timevortex
 
 import (
+	"fmt"
 	"hash/fnv"
 	"time"
 	"bytes"
@@ -61,4 +62,12 @@ func (self *News) Id() ([]byte) {
 
 	id := append(b_utime, b_fnv64...)
 	return id
+}
+
+func tExtractNewsId(id []byte) (time.Time, error) {
+	if len(id) < 16 {
+		return time.Time{}, fmt.Errorf("input value too short.")
+	}
+	t_base := binary.BigEndian.Uint64(id[0:8])
+	return time.Unix(int64(t_base), 0), nil
 }
