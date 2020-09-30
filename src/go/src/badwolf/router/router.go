@@ -20,7 +20,7 @@ const (
 	CORE_RID         uint8 = 1
 	BLOADCAST_RID    uint8 = 255
 
-	FLG_PING         uint8 = 0
+	FLG_PING         uint8 = 6
 	FLG_BYE          uint8 = 255
 	FLG_SYN          uint8 = 1
 	FLG_ACK          uint8 = 2
@@ -29,10 +29,11 @@ const (
 
 	TIMEOUT_LIMIT    int = 4
 	BLOCKSIZE        int = 4096
-	END_OF_FRAME     string = "\n\n"
 )
 
 var (
+	END_OF_FRAME     string = string([]byte{0, 0, 0, 0})
+
 	ErrClosedPort error = fmt.Errorf("closed port.")
 	ErrUnconnectPort error = fmt.Errorf("unconnect port.")
 )
@@ -392,8 +393,6 @@ func (self *port) recv() chan *Frame {
 }
 
 func (self *port) run_sender() {
-	f_ping := newFrame(self.left, self.right, FLG_PING, []byte{0})
-
 	t_range := time.Second * time.Duration(TIMEOUT_LIMIT - 1)
 	timer := time.NewTimer(t_range)
 	defer timer.Stop()
@@ -406,6 +405,7 @@ func (self *port) run_sender() {
 			timer.Stop()
 			timer.Reset(t_range)
 
+			f_ping := newFrame(self.left, self.right, FLG_PING, []byte{255})
 			if err := self.write(f_ping); err != nil {
 				self.close()
 				return
@@ -452,11 +452,15 @@ func (self *port) run_recver() {
 	}
 	rcv_ch := make(chan *rcv_data)
 	go func() {
-		buf := make([]byte, BLOCKSIZE)
-
 		for {
+			buf := make([]byte, BLOCKSIZE)
 			s, e := self.con.Read(buf)
-			rcv_ch <- &rcv_data{ret:buf[:s], err:e}
+
+			select {
+			case <-self.ctx.Done():
+				return
+			case rcv_ch <- &rcv_data{ret:buf[:s], err:e}:
+			}
 		}
 	}()
 
@@ -468,8 +472,6 @@ func (self *port) run_recver() {
 		case <-timer.C:
 			return
 		case rcv := <- rcv_ch:
-			buf = append(buf, rcv.ret...)
-
 			if rcv.err != nil {
 				if rcv.err != io.EOF {
 					logger.PrintErr("port.run_recver: %s", rcv.err)
@@ -477,16 +479,18 @@ func (self *port) run_recver() {
 				}
 				continue
 			}
+
+			buf = append(buf, rcv.ret...)
 			if len(buf) < 1 {
 				continue
 			}
 
-			packets := strings.SplitN(string(buf), END_OF_FRAME, 2)
-			if len(packets) < 2 {
+			frames := strings.SplitN(string(buf), END_OF_FRAME, 2)
+			if len(frames) < 2 {
 				continue
 			}
-			framebase := []byte(packets[0])
-			nbuf := []byte(packets[1])
+			framebase := []byte(frames[0])
+			nbuf := []byte(frames[1])
 			buf = nbuf
 
 			f, err := bytes2frame(framebase)
@@ -501,7 +505,15 @@ func (self *port) run_recver() {
 			if f.flag == FLG_PING {
 				continue
 			}
-			go func() {self.recvq <- f}()
+
+			go func() {
+				select {
+				case <- self.ctx.Done():
+					return
+				case self.recvq <- f:
+					return
+				}
+			}()
 		}
 	}
 }
